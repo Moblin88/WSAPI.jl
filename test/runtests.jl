@@ -1,6 +1,3 @@
-using WSAPI
-using Test
+using TestItemRunner
 
-@testset "WSAPI.jl" begin
-    # Write your tests here.
-end
+@run_package_tests
