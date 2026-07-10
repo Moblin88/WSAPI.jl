@@ -27,7 +27,7 @@ timestamp and `expires_in` is in seconds.
 """
 function AccessToken(value, created_at, expires_in)
     return AccessToken(
-        String(value),
+        value,
         Dates.unix2datetime(created_at) + Dates.Second(expires_in),
     )
 end
