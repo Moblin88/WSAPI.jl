@@ -1,6 +1,7 @@
 @testitem "WSAPI helper behavior" begin
     using WSAPI
     using Dates
+    using UUIDs
 
     @test WSAPI.build_variables(Dict(:a => 1, "b" => 2), pairs((c = 3, b = 4))) == Dict("a" => 1, "b" => 4, "c" => 3)
     @test WSAPI.build_variables(nothing, pairs((x = 1,))) == Dict("x" => 1)
@@ -25,8 +26,8 @@
     api = WSAPI.WSClient(
         "tokens.txt",
         "cid",
-        "did",
-        "sid",
+        uuid4(),
+        uuid4(),
         ReentrantLock(),
         WSAPI.LOGIN_PAGE_URL,
         WSAPI.OAUTH_TOKEN_URL,
@@ -50,6 +51,7 @@ end
     using Dates
     using HTTP
     using JSON
+    using UUIDs
 
     mutable struct RequestLog
         requests::Vector{NamedTuple}
@@ -101,7 +103,7 @@ end
                 oauth_token_url = "$(base_url)/v1/oauth/v2/token",
                 graphql_url = "$(base_url)/graphql",
             )
-            @test client.device_id == "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+            @test client.device_id == UUID("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
             @test client.client_id == "fedcba9876543210fedcba9876543210"
             @test client.access_token_ref[].value == "new_access"
             @test client.access_token_ref[].expiry == Dates.unix2datetime(created_at) + Dates.Second(3600)

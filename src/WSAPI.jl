@@ -29,8 +29,8 @@ end
 struct WSClient
     token_file::String
     client_id::String
-    device_id::String
-    session_id::String
+    device_id::UUID
+    session_id::UUID
     refresh_lock::ReentrantLock
     login_page_url::URI
     oauth_token_url::URI
@@ -44,37 +44,31 @@ function WSClient(
     oauth_token_url = OAUTH_TOKEN_URL,
     graphql_url = GRAPHQL_URL,
 )
-    login_page_uri = to_uri(login_page_url)
-    oauth_token_uri = to_uri(oauth_token_url)
-    graphql_uri = to_uri(graphql_url)
-    device_id, client_id = bootstrap_device_and_client(login_page_uri)
+    device_id, client_id = bootstrap_device_and_client(login_page_url)
     api = WSClient(
         String(token_file),
         client_id,
         device_id,
-        string(uuid4()),
+        uuid4(),
         ReentrantLock(),
-        login_page_uri,
-        oauth_token_uri,
-        graphql_uri,
+        URI(login_page_url),
+        URI(oauth_token_url),
+        URI(graphql_url),
         Ref{Union{Nothing, AccessToken}}(nothing),
     )
     ensure_authorized!(api)
     return api
 end
 
-to_uri(url::URI) = url
-to_uri(url::AbstractString) = URI(url)
-
 function bootstrap_device_and_client(login_page_url)
-    login_response = HTTP.request("GET", login_page_url; cookies = false, status_exception = false)
+    login_response = HTTP.request("GET", login_page_url; cookies = false)
     login_body = String(login_response.body)
     device_id = extract_device_id(login_response)
     script_match = match(APP_JS_REGEX, login_body)
     script_match === nothing && error("Unable to locate Wealthsimple app JavaScript URL.")
     app_js_url = resolvereference(login_page_url, script_match.captures[1])
 
-    app_js_response = HTTP.request("GET", app_js_url; cookies = false, status_exception = false)
+    app_js_response = HTTP.request("GET", app_js_url; cookies = false)
     app_js = String(app_js_response.body)
     client_match = match(CLIENT_ID_REGEX, app_js)
     client_match === nothing && error("Unable to locate Wealthsimple OAuth client id.")
@@ -85,7 +79,7 @@ end
 function extract_device_id(response)
     cookies = HTTP.Cookies.cookies(response)
     for cookie in cookies
-        cookie.name == "wssdi" && return String(cookie.value)
+        cookie.name == "wssdi" && return UUID(cookie.value)
     end
     error("Unable to locate Wealthsimple device id (wssdi cookie).")
 end
@@ -111,8 +105,8 @@ function token_headers(api::WSClient, profile)
         "Content-Type" => "application/json",
         "x-wealthsimple-client" => "@wealthsimple/wealthsimple",
         "x-ws-profile" => profile,
-        "x-ws-device-id" => api.device_id,
-        "x-ws-session-id" => api.session_id,
+        "x-ws-device-id" => string(api.device_id),
+        "x-ws-session-id" => string(api.session_id),
     ]
 end
 
@@ -233,8 +227,8 @@ function graphql_headers(api::WSClient)
         "x-ws-api-version" => "12",
         "x-ws-locale" => "en-CA",
         "x-platform-os" => "web",
-        "x-ws-device-id" => api.device_id,
-        "x-ws-session-id" => api.session_id,
+        "x-ws-device-id" => string(api.device_id),
+        "x-ws-session-id" => string(api.session_id),
     ]
     token_value = access_token_value(api)
     if !isnothing(token_value)
