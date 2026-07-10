@@ -46,7 +46,6 @@ function WSClient(
 )
     device_id, client_id = bootstrap_device_and_client(login_page_url)
     session_id = uuid4()
-    access_token = initialize_access_token(token_file, client_id, device_id, session_id, oauth_token_url)
     api = WSClient(
         token_file,
         client_id,
@@ -56,8 +55,9 @@ function WSClient(
         URI(login_page_url),
         URI(oauth_token_url),
         URI(graphql_url),
-        Ref(access_token),
+        Ref{AccessToken}(),
     )
+    initialize_access_token!(api)
     return api
 end
 
@@ -100,43 +100,31 @@ function request_json(method, url; headers = Pair{String, String}[], body = noth
     return response.status, payload
 end
 
-function refresh_access_token(token_file, client_id, device_id, session_id, oauth_token_url)
-    isfile(token_file) || return nothing
-    refresh_token = read(token_file, String)
-    isempty(refresh_token) && return nothing
+function refresh_access_token!(api)
+    isfile(api.token_file) || return false
+    refresh_token = read(api.token_file, String)
+    isempty(refresh_token) && return false
 
     status, payload = request_json(
         "POST",
-        oauth_token_url;
-        headers = token_headers(device_id, session_id, "invest"),
+        api.oauth_token_url;
+        headers = token_headers(api.device_id, api.session_id, "invest"),
         body = (
             grant_type = "refresh_token",
             refresh_token = refresh_token,
-            client_id = client_id,
+            client_id = api.client_id,
         ),
     )
     if status >= 400
-        return nothing
+        return false
     end
 
-    write(token_file, payload["refresh_token"])
-    return AccessToken(payload["access_token"], payload["created_at"], payload["expires_in"])
-end
-
-function refresh_access_token!(api)
-    access_token = refresh_access_token(
-        api.token_file,
-        api.client_id,
-        api.device_id,
-        api.session_id,
-        api.oauth_token_url,
-    )
-    isnothing(access_token) && return false
-    api.access_token_ref[] = access_token
+    write(api.token_file, payload["refresh_token"])
+    api.access_token_ref[] = AccessToken(payload["access_token"], payload["created_at"], payload["expires_in"])
     return true
 end
 
-function interactive_login(client_id, device_id, session_id, oauth_token_url)
+function interactive_login!(api)
     print("Wealthsimple username: ")
     username = chomp(readline(stdin))
     password = Base.shred!(readchomp, Base.getpass("Wealthsimple password"))
@@ -147,23 +135,23 @@ function interactive_login(client_id, device_id, session_id, oauth_token_url)
         username = username,
         password = password,
         scope = "read write",
-        client_id = client_id
+        client_id = api.client_id
     )
     status, payload = request_json(
         "POST",
-        oauth_token_url;
-        headers = token_headers(device_id, session_id, "undefined"),
+        api.oauth_token_url;
+        headers = token_headers(api.device_id, api.session_id, "undefined"),
         body = login_payload,
     )
 
     if status >= 400 && get(payload, "error", "") == "invalid_grant"
         otp = Base.shred!(readchomp, Base.getpass("Wealthsimple OTP code"))
         println()
-        otp_headers = token_headers(device_id, session_id, "undefined")
+        otp_headers = token_headers(api.device_id, api.session_id, "undefined")
         push!(otp_headers, "x-wealthsimple-otp" => "$(otp);remember=true")
         status, payload = request_json(
             "POST",
-            oauth_token_url;
+            api.oauth_token_url;
             headers = otp_headers,
             body = login_payload,
         )
@@ -173,38 +161,21 @@ function interactive_login(client_id, device_id, session_id, oauth_token_url)
         error("Wealthsimple login failed.")
     end
 
-    access_token = AccessToken(payload["access_token"], payload["created_at"], payload["expires_in"])
-    new_refresh_token = payload["refresh_token"]
-    return access_token, new_refresh_token
-end
-
-function interactive_login!(api)
-    access_token, refresh_token = interactive_login(
-        api.client_id,
-        api.device_id,
-        api.session_id,
-        api.oauth_token_url,
-    )
-    api.access_token_ref[] = access_token
-    write(api.token_file, refresh_token)
+    api.access_token_ref[] = AccessToken(payload["access_token"], payload["created_at"], payload["expires_in"])
+    write(api.token_file, payload["refresh_token"])
     return nothing
 end
 
-function initialize_access_token(token_file, client_id, device_id, session_id, oauth_token_url)
-    access_token = refresh_access_token(token_file, client_id, device_id, session_id, oauth_token_url)
-    if !isnothing(access_token)
-        return access_token
+function initialize_access_token!(api)
+    if refresh_access_token!(api)
+        return nothing
     end
-    access_token, refresh_token = interactive_login(client_id, device_id, session_id, oauth_token_url)
-    write(token_file, refresh_token)
-    return access_token
+    interactive_login!(api)
+    return nothing
 end
 
-access_token_value(api) = (api.access_token_ref[]::AccessToken).value
-access_token_expiry(api) = (api.access_token_ref[]::AccessToken).expiry
-
 function should_refresh(api)
-    return access_token_expiry(api) <= (Dates.now(Dates.UTC) + Dates.Second(30))
+    return api.access_token_ref[].expiry <= (Dates.now(Dates.UTC) + Dates.Second(30))
 end
 
 function maybe_refresh_nonblocking!(api)
@@ -219,21 +190,26 @@ function maybe_refresh_nonblocking!(api)
     return nothing
 end
 
+function set_merged_value!(merged::Dict{String, Any}, (key, value))
+    merged[String(key)] = value
+    return nothing
+end
+
 function build_variables(variables, kwargs)
     merged = Dict{String, Any}()
     if !isnothing(variables)
-        for (key, value) in pairs(variables)
-            merged[String(key)] = value
+        for entry in pairs(variables)
+            set_merged_value!(merged, entry)
         end
     end
-    for (key, value) in kwargs
-        merged[String(key)] = value
+    for entry in kwargs
+        set_merged_value!(merged, entry)
     end
     return merged
 end
 
-function graphql_headers(api::WSClient)
-    headers = Pair{String, String}[
+function graphql_headers(api)
+    headers = [
         "Content-Type" => "application/json",
         "x-ws-profile" => "trade",
         "x-ws-api-version" => "12",
@@ -241,7 +217,7 @@ function graphql_headers(api::WSClient)
         "x-platform-os" => "web",
         "x-ws-device-id" => string(api.device_id),
         "x-ws-session-id" => string(api.session_id),
-        "Authorization" => "Bearer $(access_token_value(api))",
+        "Authorization" => "Bearer $(api.access_token_ref[].value)",
     ]
     return headers
 end
