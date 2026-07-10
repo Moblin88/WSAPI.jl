@@ -35,7 +35,7 @@ struct WSClient
     login_page_url::URI
     oauth_token_url::URI
     graphql_url::URI
-    access_token_ref::Base.RefValue{Union{Nothing, AccessToken}}
+    access_token_ref::Base.RefValue{AccessToken}
 end
 
 function WSClient(
@@ -45,20 +45,19 @@ function WSClient(
     graphql_url = GRAPHQL_URL,
 )
     device_id, client_id = bootstrap_device_and_client(login_page_url)
+    session_id = uuid4()
+    access_token = initialize_access_token(token_file, client_id, device_id, session_id, oauth_token_url)
     api = WSClient(
         token_file,
         client_id,
         device_id,
-        uuid4(),
+        session_id,
         ReentrantLock(),
         URI(login_page_url),
         URI(oauth_token_url),
         URI(graphql_url),
-        Ref{Union{Nothing, AccessToken}}(nothing),
+        Ref(access_token),
     )
-    if !refresh_access_token!(api)
-        interactive_login!(api)
-    end
     return api
 end
 
@@ -83,17 +82,17 @@ function extract_device_id(response)
     error("Unable to locate Wealthsimple device id (wssdi cookie).")
 end
 
-function token_headers(api, profile)
+function token_headers(device_id, session_id, profile)
     return [
         "Content-Type" => "application/json",
         "x-wealthsimple-client" => "@wealthsimple/wealthsimple",
         "x-ws-profile" => profile,
-        "x-ws-device-id" => string(api.device_id),
-        "x-ws-session-id" => string(api.session_id),
+        "x-ws-device-id" => string(device_id),
+        "x-ws-session-id" => string(session_id),
     ]
 end
 
-function request_json(api, method, url; headers = Pair{String, String}[], body = nothing)
+function request_json(method, url; headers = Pair{String, String}[], body = nothing)
     response = body === nothing ?
         HTTP.request(method, url, headers; status_exception = false) :
         HTTP.request(method, url, headers, JSON.json(body); status_exception = false)
@@ -101,32 +100,43 @@ function request_json(api, method, url; headers = Pair{String, String}[], body =
     return response.status, payload
 end
 
-function refresh_access_token!(api)
-    isfile(api.token_file) || return false
-    refresh_token = read(api.token_file, String)
-    isempty(refresh_token) && return false
+function refresh_access_token(token_file, client_id, device_id, session_id, oauth_token_url)
+    isfile(token_file) || return nothing
+    refresh_token = read(token_file, String)
+    isempty(refresh_token) && return nothing
 
     status, payload = request_json(
-        api,
         "POST",
-        api.oauth_token_url;
-        headers = token_headers(api, "invest"),
+        oauth_token_url;
+        headers = token_headers(device_id, session_id, "invest"),
         body = (
             grant_type = "refresh_token",
             refresh_token = refresh_token,
-            client_id = api.client_id,
+            client_id = client_id,
         ),
     )
     if status >= 400
-        return false
+        return nothing
     end
 
-    api.access_token_ref[] = AccessToken(payload["access_token"], payload["created_at"], payload["expires_in"])
-    write(api.token_file, payload["refresh_token"])
+    write(token_file, payload["refresh_token"])
+    return AccessToken(payload["access_token"], payload["created_at"], payload["expires_in"])
+end
+
+function refresh_access_token!(api)
+    access_token = refresh_access_token(
+        api.token_file,
+        api.client_id,
+        api.device_id,
+        api.session_id,
+        api.oauth_token_url,
+    )
+    isnothing(access_token) && return false
+    api.access_token_ref[] = access_token
     return true
 end
 
-function interactive_login!(api)
+function interactive_login(client_id, device_id, session_id, oauth_token_url)
     print("Wealthsimple username: ")
     username = chomp(readline(stdin))
     password = Base.shred!(readchomp, Base.getpass("Wealthsimple password"))
@@ -137,25 +147,23 @@ function interactive_login!(api)
         username = username,
         password = password,
         scope = "read write",
-        client_id = api.client_id
+        client_id = client_id
     )
     status, payload = request_json(
-        api,
         "POST",
-        api.oauth_token_url;
-        headers = token_headers(api, "undefined"),
+        oauth_token_url;
+        headers = token_headers(device_id, session_id, "undefined"),
         body = login_payload,
     )
 
     if status >= 400 && get(payload, "error", "") == "invalid_grant"
         otp = Base.shred!(readchomp, Base.getpass("Wealthsimple OTP code"))
         println()
-        otp_headers = token_headers(api, "undefined")
+        otp_headers = token_headers(device_id, session_id, "undefined")
         push!(otp_headers, "x-wealthsimple-otp" => "$(otp);remember=true")
         status, payload = request_json(
-            api,
             "POST",
-            api.oauth_token_url;
+            oauth_token_url;
             headers = otp_headers,
             body = login_payload,
         )
@@ -165,18 +173,38 @@ function interactive_login!(api)
         error("Wealthsimple login failed.")
     end
 
-    api.access_token_ref[] = AccessToken(payload["access_token"], payload["created_at"], payload["expires_in"])
-    write(api.token_file, payload["refresh_token"])
+    access_token = AccessToken(payload["access_token"], payload["created_at"], payload["expires_in"])
+    new_refresh_token = payload["refresh_token"]
+    return access_token, new_refresh_token
+end
+
+function interactive_login!(api)
+    access_token, refresh_token = interactive_login(
+        api.client_id,
+        api.device_id,
+        api.session_id,
+        api.oauth_token_url,
+    )
+    api.access_token_ref[] = access_token
+    write(api.token_file, refresh_token)
     return nothing
 end
 
-access_token_value(api) = isnothing(api.access_token_ref[]) ? nothing : api.access_token_ref[].value
-access_token_expiry(api) = isnothing(api.access_token_ref[]) ? nothing : api.access_token_ref[].expiry
+function initialize_access_token(token_file, client_id, device_id, session_id, oauth_token_url)
+    access_token = refresh_access_token(token_file, client_id, device_id, session_id, oauth_token_url)
+    if !isnothing(access_token)
+        return access_token
+    end
+    access_token, refresh_token = interactive_login(client_id, device_id, session_id, oauth_token_url)
+    write(token_file, refresh_token)
+    return access_token
+end
+
+access_token_value(api) = (api.access_token_ref[]::AccessToken).value
+access_token_expiry(api) = (api.access_token_ref[]::AccessToken).expiry
 
 function should_refresh(api)
-    return !isnothing(access_token_value(api)) &&
-           !isnothing(access_token_expiry(api)) &&
-           (access_token_expiry(api)::DateTime) <= (Dates.now(Dates.UTC) + Dates.Second(30))
+    return access_token_expiry(api) <= (Dates.now(Dates.UTC) + Dates.Second(30))
 end
 
 function maybe_refresh_nonblocking!(api)
@@ -213,11 +241,8 @@ function graphql_headers(api::WSClient)
         "x-platform-os" => "web",
         "x-ws-device-id" => string(api.device_id),
         "x-ws-session-id" => string(api.session_id),
+        "Authorization" => "Bearer $(access_token_value(api))",
     ]
-    token_value = access_token_value(api)
-    if !isnothing(token_value)
-        push!(headers, "Authorization" => "Bearer $(token_value)")
-    end
     return headers
 end
 
@@ -228,7 +253,7 @@ function (api::WSClient)(query, operation_name, variables = nothing; kwargs...)
         operationName = operation_name,
         variables = build_variables(variables, kwargs),
     )
-    status, response = request_json(api, "POST", api.graphql_url; headers = graphql_headers(api), body = payload)
+    status, response = request_json("POST", api.graphql_url; headers = graphql_headers(api), body = payload)
     status >= 400 && error("GraphQL request failed with HTTP status $(status).")
     return response
 end

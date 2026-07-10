@@ -17,12 +17,10 @@
         WSAPI.LOGIN_PAGE_URL,
         WSAPI.OAUTH_TOKEN_URL,
         WSAPI.GRAPHQL_URL,
-        Ref{Union{Nothing, WSAPI.AccessToken}}(WSAPI.AccessToken("access", Dates.now(Dates.UTC) + Dates.Second(15))),
+        Ref(WSAPI.AccessToken("access", Dates.now(Dates.UTC) + Dates.Second(15))),
     )
     @test WSAPI.should_refresh(api)
     api.access_token_ref[] = WSAPI.AccessToken("access", Dates.now(Dates.UTC) + Dates.Second(300))
-    @test !WSAPI.should_refresh(api)
-    api.access_token_ref[] = nothing
     @test !WSAPI.should_refresh(api)
 
     created_at = round(Int, Dates.datetime2unix(Dates.now(Dates.UTC)))
