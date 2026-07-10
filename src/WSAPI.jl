@@ -92,29 +92,24 @@ function token_headers(device_id, session_id, profile)
     ]
 end
 
-function request_json(method, url; headers = Pair{String, String}[], body = nothing)
-    response = body === nothing ?
-        HTTP.request(method, url, headers; status_exception = false) :
-        HTTP.request(method, url, headers, JSON.json(body); status_exception = false)
-    payload = isempty(response.body) ? JSON.parse("{}") : JSON.parse(response.body)
-    return response.status, payload
-end
-
 function refresh_access_token!(api)
     isfile(api.token_file) || return false
     refresh_token = read(api.token_file, String)
     isempty(refresh_token) && return false
 
-    status, payload = request_json(
+    response = HTTP.request(
         "POST",
-        api.oauth_token_url;
-        headers = token_headers(api.device_id, api.session_id, "invest"),
-        body = (
+        api.oauth_token_url,
+        token_headers(api.device_id, api.session_id, "invest"),
+        JSON.json((
             grant_type = "refresh_token",
             refresh_token = refresh_token,
             client_id = api.client_id,
-        ),
+        ));
+        status_exception = false,
     )
+    status = response.status
+    payload = isempty(response.body) ? Dict{String, Any}() : JSON.parse(response.body)
     if status >= 400
         return false
     end
@@ -137,24 +132,30 @@ function interactive_login!(api)
         scope = "read write",
         client_id = api.client_id
     )
-    status, payload = request_json(
+    response = HTTP.request(
         "POST",
-        api.oauth_token_url;
-        headers = token_headers(api.device_id, api.session_id, "undefined"),
-        body = login_payload,
+        api.oauth_token_url,
+        token_headers(api.device_id, api.session_id, "undefined"),
+        JSON.json(login_payload);
+        status_exception = false,
     )
+    status = response.status
+    payload = isempty(response.body) ? Dict{String, Any}() : JSON.parse(response.body)
 
     if status >= 400 && get(payload, "error", "") == "invalid_grant"
         otp = Base.shred!(readchomp, Base.getpass("Wealthsimple OTP code"))
         println()
         otp_headers = token_headers(api.device_id, api.session_id, "undefined")
         push!(otp_headers, "x-wealthsimple-otp" => "$(otp);remember=true")
-        status, payload = request_json(
+        response = HTTP.request(
             "POST",
-            api.oauth_token_url;
-            headers = otp_headers,
-            body = login_payload,
+            api.oauth_token_url,
+            otp_headers,
+            JSON.json(login_payload);
+            status_exception = false,
         )
+        status = response.status
+        payload = isempty(response.body) ? Dict{String, Any}() : JSON.parse(response.body)
     end
 
     if status >= 400
@@ -229,9 +230,15 @@ function (api::WSClient)(query, operation_name, variables = nothing; kwargs...)
         operationName = operation_name,
         variables = build_variables(variables, kwargs),
     )
-    status, response = request_json("POST", api.graphql_url; headers = graphql_headers(api), body = payload)
-    status >= 400 && error("GraphQL request failed with HTTP status $(status).")
-    return response
+    response = HTTP.request(
+        "POST",
+        api.graphql_url,
+        graphql_headers(api),
+        JSON.json(payload);
+        status_exception = false,
+    )
+    response.status >= 400 && error("GraphQL request failed with HTTP status $(response.status).")
+    return isempty(response.body) ? Dict{String, Any}() : JSON.parse(response.body)
 end
 
 end
