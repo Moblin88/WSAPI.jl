@@ -25,34 +25,49 @@ struct WSClient
     device_id::String
     session_id::String
     refresh_lock::ReentrantLock
-    request_fn
+    login_page_url::URI
+    oauth_token_url::URI
+    graphql_url::URI
     access_token_ref::Base.RefValue{Union{Nothing, AccessToken}}
 end
 
-function WSClient(token_file::AbstractString; request_fn = HTTP.request)
-    device_id, client_id = bootstrap_device_and_client(request_fn)
+function WSClient(
+    token_file::AbstractString;
+    login_page_url = LOGIN_PAGE_URL,
+    oauth_token_url = OAUTH_TOKEN_URL,
+    graphql_url = GRAPHQL_URL,
+)
+    login_page_uri = to_uri(login_page_url)
+    oauth_token_uri = to_uri(oauth_token_url)
+    graphql_uri = to_uri(graphql_url)
+    device_id, client_id = bootstrap_device_and_client(login_page_uri)
     api = WSClient(
         String(token_file),
         client_id,
         device_id,
         string(uuid4()),
         ReentrantLock(),
-        request_fn,
+        login_page_uri,
+        oauth_token_uri,
+        graphql_uri,
         Ref{Union{Nothing, AccessToken}}(nothing),
     )
     ensure_authorized!(api)
     return api
 end
 
-function bootstrap_device_and_client(request_fn)
-    login_response = request_fn("GET", LOGIN_PAGE_URL; cookies = false)
+to_uri(url::URI) = url
+to_uri(url::AbstractString) = URI(url)
+
+function bootstrap_device_and_client(login_page_url::URI)
+    login_response = HTTP.request("GET", login_page_url; cookies = false, status_exception = false)
     login_body = String(login_response.body)
     device_id = extract_device_id(login_response)
     script_match = match(APP_JS_REGEX, login_body)
     script_match === nothing && error("Unable to locate Wealthsimple app JavaScript URL.")
-    app_js_url = resolvereference(LOGIN_PAGE_URL, script_match.captures[1])
+    app_js_url = resolvereference(login_page_url, script_match.captures[1])
 
-    app_js_response = request_fn("GET", app_js_url; cookies = false)
+    app_js_response = HTTP.request("GET", app_js_url; cookies = false, status_exception = false)
     app_js = String(app_js_response.body)
     client_match = match(CLIENT_ID_REGEX, app_js)
     client_match === nothing && error("Unable to locate Wealthsimple OAuth client id.")
@@ -100,15 +115,10 @@ function token_headers(api::WSClient, profile::AbstractString)
 end
 
 function request_json(api::WSClient, method::AbstractString, url::Union{AbstractString, URI}; headers = Pair{String, String}[], body = nothing)
-    response = if api.request_fn === HTTP.request
-        body === nothing ?
-            api.request_fn(method, url, headers; status_exception = false) :
-            api.request_fn(method, url, headers, JSON.json(body); status_exception = false)
-    else
-        body === nothing ? api.request_fn(method, url, headers) : api.request_fn(method, url, headers, JSON.json(body))
-    end
-    text = String(response.body)
-    payload = isempty(text) ? Dict{String, Any}() : JSON.parse(text)
+    response = body === nothing ?
+        HTTP.request(method, url, headers; status_exception = false) :
+        HTTP.request(method, url, headers, JSON.json(body); status_exception = false)
+    payload = isempty(response.body) ? Dict{String, Any}() : JSON.parse(response.body; dicttype = Dict{String, Any})
     return response.status, payload
 end
 
@@ -119,7 +129,7 @@ function refresh_access_token!(api::WSClient)
     status, payload = request_json(
         api,
         "POST",
-        OAUTH_TOKEN_URL;
+        api.oauth_token_url;
         headers = token_headers(api, "invest"),
         body = (
             grant_type = "refresh_token",
@@ -152,7 +162,7 @@ function interactive_login!(api::WSClient)
     status, payload = request_json(
         api,
         "POST",
-        OAUTH_TOKEN_URL;
+        api.oauth_token_url;
         headers = token_headers(api, "undefined"),
         body = login_payload,
     )
@@ -165,7 +175,7 @@ function interactive_login!(api::WSClient)
         status, payload = request_json(
             api,
             "POST",
-            OAUTH_TOKEN_URL;
+            api.oauth_token_url;
             headers = otp_headers,
             body = login_payload,
         )
@@ -260,7 +270,7 @@ function (api::WSClient)(query::AbstractString, operation_name::AbstractString, 
         operationName = operation_name,
         variables = build_variables(variables, kwargs),
     )
-    status, response = request_json(api, "POST", GRAPHQL_URL; headers = graphql_headers(api), body = payload)
+    status, response = request_json(api, "POST", api.graphql_url; headers = graphql_headers(api), body = payload)
     status >= 400 && error("GraphQL request failed with HTTP status $(status).")
     return response
 end

@@ -18,7 +18,7 @@ response = api(
 
 Notes:
 - `WSClient(token_file)` reads `refresh_token` from the file, refreshes access if possible, and otherwise prompts for username/password (and OTP when required).
-- For testing, you can pass `request_fn` to `WSClient(token_file; request_fn=...)` to mock HTTP responses.
+- For integration-style testing, you can point `WSClient` at a localhost server via `login_page_url`, `oauth_token_url`, and `graphql_url`.
 - Rotated/new refresh tokens are persisted back to the same file as plain token text.
 - GraphQL calls accept an optional `pairs`-iterable variables object plus keyword arguments, where keyword arguments override duplicate keys.
 - Access tokens are refreshed automatically when they are within 30 seconds of expiry using a non-blocking, thread-safe refresh strategy.
