@@ -6,21 +6,6 @@
     @test WSAPI.build_variables(Dict(:a => 1, "b" => 2), pairs((c = 3, b = 4))) == Dict("a" => 1, "b" => 4, "c" => 3)
     @test WSAPI.build_variables(nothing, pairs((x = 1,))) == Dict("x" => 1)
 
-    mktempdir() do dir
-        token_path = joinpath(dir, "token.txt")
-        write(token_path, "from-plain")
-        @test WSAPI.read_refresh_token(token_path) == "from-plain"
-
-        write(token_path, "")
-        @test isnothing(WSAPI.read_refresh_token(token_path))
-
-        missing_path = joinpath(dir, "missing-token.txt")
-        @test isnothing(WSAPI.read_refresh_token(missing_path))
-
-        write(token_path, "persisted-refresh")
-        @test read(token_path, String) == "persisted-refresh"
-    end
-
     @test !hasfield(WSAPI.WSClient, :refresh_token)
 
     api = WSAPI.WSClient(

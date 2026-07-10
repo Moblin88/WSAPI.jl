@@ -46,7 +46,7 @@ function WSClient(
 )
     device_id, client_id = bootstrap_device_and_client(login_page_url)
     api = WSClient(
-        String(token_file),
+        token_file,
         client_id,
         device_id,
         uuid4(),
@@ -56,52 +56,35 @@ function WSClient(
         URI(graphql_url),
         Ref{Union{Nothing, AccessToken}}(nothing),
     )
-    ensure_authorized!(api)
+    if !refresh_access_token!(api)
+        interactive_login!(api)
+    end
     return api
 end
 
 function bootstrap_device_and_client(login_page_url)
     login_response = HTTP.request("GET", login_page_url; cookies = false)
-    login_body = String(login_response.body)
     device_id = extract_device_id(login_response)
-    script_match = match(APP_JS_REGEX, login_body)
+    script_match = match(APP_JS_REGEX, String(login_response.body))
     script_match === nothing && error("Unable to locate Wealthsimple app JavaScript URL.")
     app_js_url = resolvereference(login_page_url, script_match.captures[1])
 
     app_js_response = HTTP.request("GET", app_js_url; cookies = false)
-    app_js = String(app_js_response.body)
-    client_match = match(CLIENT_ID_REGEX, app_js)
+    client_match = match(CLIENT_ID_REGEX, String(app_js_response.body))
     client_match === nothing && error("Unable to locate Wealthsimple OAuth client id.")
 
     return device_id, client_match.captures[1]
 end
 
 function extract_device_id(response)
-    cookies = HTTP.Cookies.cookies(response)
-    for cookie in cookies
+    for cookie in HTTP.Cookies.cookies(response)
         cookie.name == "wssdi" && return UUID(cookie.value)
     end
     error("Unable to locate Wealthsimple device id (wssdi cookie).")
 end
 
-function read_refresh_token(path)
-    isfile(path) || return nothing
-    content = read(path, String)
-    isempty(content) && return nothing
-    return content
-end
-
-function ensure_authorized!(api::WSClient)
-    if refresh_access_token!(api)
-        return api
-    end
-
-    interactive_login!(api)
-    return api
-end
-
-function token_headers(api::WSClient, profile)
-    return Pair{String, String}[
+function token_headers(api, profile)
+    return [
         "Content-Type" => "application/json",
         "x-wealthsimple-client" => "@wealthsimple/wealthsimple",
         "x-ws-profile" => profile,
@@ -110,7 +93,7 @@ function token_headers(api::WSClient, profile)
     ]
 end
 
-function request_json(api::WSClient, method, url; headers = Pair{String, String}[], body = nothing)
+function request_json(api, method, url; headers = Pair{String, String}[], body = nothing)
     response = body === nothing ?
         HTTP.request(method, url, headers; status_exception = false) :
         HTTP.request(method, url, headers, JSON.json(body); status_exception = false)
@@ -118,9 +101,10 @@ function request_json(api::WSClient, method, url; headers = Pair{String, String}
     return response.status, payload
 end
 
-function refresh_access_token!(api::WSClient)
-    refresh_token = read_refresh_token(api.token_file)
-    isnothing(refresh_token) && return false
+function refresh_access_token!(api)
+    isfile(api.token_file) || return false
+    refresh_token = read(api.token_file, String)
+    isempty(refresh_token) && return false
 
     status, payload = request_json(
         api,
@@ -142,7 +126,7 @@ function refresh_access_token!(api::WSClient)
     return true
 end
 
-function interactive_login!(api::WSClient)
+function interactive_login!(api)
     print("Wealthsimple username: ")
     username = chomp(readline(stdin))
     password = Base.shred!(readchomp, Base.getpass("Wealthsimple password"))
@@ -186,16 +170,16 @@ function interactive_login!(api::WSClient)
     return nothing
 end
 
-access_token_value(api::WSClient) = isnothing(api.access_token_ref[]) ? nothing : api.access_token_ref[].value
-access_token_expiry(api::WSClient) = isnothing(api.access_token_ref[]) ? nothing : api.access_token_ref[].expiry
+access_token_value(api) = isnothing(api.access_token_ref[]) ? nothing : api.access_token_ref[].value
+access_token_expiry(api) = isnothing(api.access_token_ref[]) ? nothing : api.access_token_ref[].expiry
 
-function should_refresh(api::WSClient)
+function should_refresh(api)
     return !isnothing(access_token_value(api)) &&
            !isnothing(access_token_expiry(api)) &&
            (access_token_expiry(api)::DateTime) <= (Dates.now(Dates.UTC) + Dates.Second(30))
 end
 
-function maybe_refresh_nonblocking!(api::WSClient)
+function maybe_refresh_nonblocking!(api)
     should_refresh(api) || return nothing
     trylock(api.refresh_lock) || return nothing
     try
