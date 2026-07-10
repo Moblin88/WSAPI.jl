@@ -19,6 +19,13 @@ struct AccessToken
     expiry::DateTime
 end
 
+function AccessToken(value, created_at, expires_in)
+    return AccessToken(
+        String(value),
+        Dates.unix2datetime(created_at) + Dates.Second(expires_in),
+    )
+end
+
 struct WSClient
     token_file::String
     client_id::String
@@ -118,7 +125,7 @@ function request_json(api::WSClient, method::AbstractString, url::Union{Abstract
     response = body === nothing ?
         HTTP.request(method, url, headers; status_exception = false) :
         HTTP.request(method, url, headers, JSON.json(body); status_exception = false)
-    payload = isempty(response.body) ? Dict{String, Any}() : JSON.parse(response.body; dicttype = Dict{String, Any})
+    payload = isempty(response.body) ? JSON.parse("{}") : JSON.parse(response.body)
     return response.status, payload
 end
 
@@ -141,7 +148,7 @@ function refresh_access_token!(api::WSClient)
         return false
     end
 
-    apply_token_payload!(api, payload)
+    api.access_token_ref[] = AccessToken(payload["access_token"], payload["created_at"], payload["expires_in"])
     persist_refresh_token!(api.token_file, String(payload["refresh_token"]))
     return true
 end
@@ -185,35 +192,21 @@ function interactive_login!(api::WSClient)
         error("Wealthsimple login failed.")
     end
 
-    apply_token_payload!(api, payload)
+    api.access_token_ref[] = AccessToken(payload["access_token"], payload["created_at"], payload["expires_in"])
     persist_refresh_token!(api.token_file, String(payload["refresh_token"]))
     return nothing
 end
 
-function has_token_payload(payload::Dict{String, Any})
+function has_token_payload(payload::AbstractDict)
     haskey(payload, "access_token") || return false
     haskey(payload, "refresh_token") || return false
     haskey(payload, "created_at") || return false
-    return payload["access_token"] isa AbstractString &&
-           payload["refresh_token"] isa AbstractString &&
-           payload["created_at"] isa Number &&
-           !isempty(payload["access_token"]) &&
-           !isempty(payload["refresh_token"])
+    haskey(payload, "expires_in") || return false
+    return !isempty(String(payload["access_token"])) && !isempty(String(payload["refresh_token"]))
 end
 
 access_token_value(api::WSClient) = isnothing(api.access_token_ref[]) ? nothing : api.access_token_ref[].value
 access_token_expiry(api::WSClient) = isnothing(api.access_token_ref[]) ? nothing : api.access_token_ref[].expiry
-
-function apply_token_payload!(api::WSClient, payload::Dict{String, Any})
-    expires_in = get(payload, "expires_in", 300)
-    expiry_seconds = expires_in isa Number ? round(Int, Float64(expires_in)) : 300
-    created_at = payload["created_at"]
-    api.access_token_ref[] = AccessToken(
-        String(payload["access_token"]),
-        Dates.unix2datetime(round(Int, Float64(created_at))) + Dates.Second(expiry_seconds),
-    )
-    return nothing
-end
 
 function should_refresh(api::WSClient)
     return !isnothing(access_token_value(api)) &&

@@ -38,6 +38,11 @@
     @test !WSAPI.should_refresh(api)
     api.access_token_ref[] = nothing
     @test !WSAPI.should_refresh(api)
+
+    created_at = round(Int, Dates.datetime2unix(Dates.now(Dates.UTC)))
+    access_token = WSAPI.AccessToken("constructed", created_at, 120)
+    @test access_token.value == "constructed"
+    @test access_token.expiry == Dates.unix2datetime(created_at) + Dates.Second(120)
 end
 
 @testitem "WSAPI localhost HTTP flow (configurable endpoints)" begin
