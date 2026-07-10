@@ -19,6 +19,12 @@ struct AccessToken
     expiry::DateTime
 end
 
+"""
+    AccessToken(value, created_at, expires_in)
+
+Create an `AccessToken` from OAuth token fields where `created_at` is a Unix
+timestamp and `expires_in` is in seconds.
+"""
 function AccessToken(value, created_at, expires_in)
     return AccessToken(
         String(value),
@@ -38,6 +44,17 @@ struct WSClient
     access_token_ref::Base.RefValue{AccessToken}
 end
 
+include("authentication.jl")
+include("graphql.jl")
+
+"""
+    WSClient(token_file; login_page_url=LOGIN_PAGE_URL, oauth_token_url=OAUTH_TOKEN_URL, graphql_url=GRAPHQL_URL)
+
+Create an authenticated Wealthsimple client.
+
+The constructor first tries to refresh using the token in `token_file`. If that
+fails, it falls back to interactive login and persists the new refresh token.
+"""
 function WSClient(
     token_file;
     login_page_url = LOGIN_PAGE_URL,
@@ -46,7 +63,7 @@ function WSClient(
 )
     device_id, client_id = bootstrap_device_and_client(login_page_url)
     session_id = uuid4()
-    api = WSClient(
+    client = WSClient(
         token_file,
         client_id,
         device_id,
@@ -57,188 +74,8 @@ function WSClient(
         URI(graphql_url),
         Ref{AccessToken}(),
     )
-    initialize_access_token!(api)
-    return api
-end
-
-function bootstrap_device_and_client(login_page_url)
-    login_response = HTTP.request("GET", login_page_url; cookies = false)
-    device_id = extract_device_id(login_response)
-    script_match = match(APP_JS_REGEX, String(login_response.body))
-    script_match === nothing && error("Unable to locate Wealthsimple app JavaScript URL.")
-    app_js_url = resolvereference(login_page_url, script_match.captures[1])
-
-    app_js_response = HTTP.request("GET", app_js_url; cookies = false)
-    client_match = match(CLIENT_ID_REGEX, String(app_js_response.body))
-    client_match === nothing && error("Unable to locate Wealthsimple OAuth client id.")
-
-    return device_id, client_match.captures[1]
-end
-
-function extract_device_id(response)
-    for cookie in HTTP.Cookies.cookies(response)
-        cookie.name == "wssdi" && return UUID(cookie.value)
-    end
-    error("Unable to locate Wealthsimple device id (wssdi cookie).")
-end
-
-function token_headers(device_id, session_id, profile)
-    return [
-        "Content-Type" => "application/json",
-        "x-wealthsimple-client" => "@wealthsimple/wealthsimple",
-        "x-ws-profile" => profile,
-        "x-ws-device-id" => string(device_id),
-        "x-ws-session-id" => string(session_id),
-    ]
-end
-
-function refresh_access_token!(api)
-    isfile(api.token_file) || return false
-    refresh_token = read(api.token_file, String)
-    isempty(refresh_token) && return false
-
-    response = HTTP.request(
-        "POST",
-        api.oauth_token_url,
-        token_headers(api.device_id, api.session_id, "invest"),
-        JSON.json((
-            grant_type = "refresh_token",
-            refresh_token = refresh_token,
-            client_id = api.client_id,
-        ));
-        status_exception = false,
-    )
-    status = response.status
-    payload = isempty(response.body) ? Dict{String, Any}() : JSON.parse(response.body)
-    if status >= 400
-        return false
-    end
-
-    write(api.token_file, payload["refresh_token"])
-    api.access_token_ref[] = AccessToken(payload["access_token"], payload["created_at"], payload["expires_in"])
-    return true
-end
-
-function interactive_login!(api)
-    print("Wealthsimple username: ")
-    username = chomp(readline(stdin))
-    password = Base.shred!(readchomp, Base.getpass("Wealthsimple password"))
-    println()
-    login_payload = (
-        grant_type = "password",
-        skip_provision = "true",
-        username = username,
-        password = password,
-        scope = "read write",
-        client_id = api.client_id
-    )
-    response = HTTP.request(
-        "POST",
-        api.oauth_token_url,
-        token_headers(api.device_id, api.session_id, "undefined"),
-        JSON.json(login_payload);
-        status_exception = false,
-    )
-    status = response.status
-    payload = isempty(response.body) ? Dict{String, Any}() : JSON.parse(response.body)
-
-    if status >= 400 && get(payload, "error", "") == "invalid_grant"
-        otp = Base.shred!(readchomp, Base.getpass("Wealthsimple OTP code"))
-        println()
-        otp_headers = token_headers(api.device_id, api.session_id, "undefined")
-        push!(otp_headers, "x-wealthsimple-otp" => "$(otp);remember=true")
-        response = HTTP.request(
-            "POST",
-            api.oauth_token_url,
-            otp_headers,
-            JSON.json(login_payload);
-            status_exception = false,
-        )
-        status = response.status
-        payload = isempty(response.body) ? Dict{String, Any}() : JSON.parse(response.body)
-    end
-
-    if status >= 400
-        error("Wealthsimple login failed.")
-    end
-
-    api.access_token_ref[] = AccessToken(payload["access_token"], payload["created_at"], payload["expires_in"])
-    write(api.token_file, payload["refresh_token"])
-    return nothing
-end
-
-function initialize_access_token!(api)
-    if refresh_access_token!(api)
-        return nothing
-    end
-    interactive_login!(api)
-    return nothing
-end
-
-function should_refresh(api)
-    return api.access_token_ref[].expiry <= (Dates.now(Dates.UTC) + Dates.Second(30))
-end
-
-function maybe_refresh_nonblocking!(api)
-    should_refresh(api) || return nothing
-    trylock(api.refresh_lock) || return nothing
-    try
-        should_refresh(api) || return nothing
-        refresh_access_token!(api)
-    finally
-        unlock(api.refresh_lock)
-    end
-    return nothing
-end
-
-function set_merged_value!(merged::Dict{String, Any}, (key, value))
-    merged[String(key)] = value
-    return nothing
-end
-
-function build_variables(variables, kwargs)
-    merged = Dict{String, Any}()
-    if !isnothing(variables)
-        for entry in pairs(variables)
-            set_merged_value!(merged, entry)
-        end
-    end
-    for entry in kwargs
-        set_merged_value!(merged, entry)
-    end
-    return merged
-end
-
-function graphql_headers(api)
-    headers = [
-        "Content-Type" => "application/json",
-        "x-ws-profile" => "trade",
-        "x-ws-api-version" => "12",
-        "x-ws-locale" => "en-CA",
-        "x-platform-os" => "web",
-        "x-ws-device-id" => string(api.device_id),
-        "x-ws-session-id" => string(api.session_id),
-        "Authorization" => "Bearer $(api.access_token_ref[].value)",
-    ]
-    return headers
-end
-
-function (api::WSClient)(query, operation_name, variables = nothing; kwargs...)
-    maybe_refresh_nonblocking!(api)
-    payload = (
-        query = query,
-        operationName = operation_name,
-        variables = build_variables(variables, kwargs),
-    )
-    response = HTTP.request(
-        "POST",
-        api.graphql_url,
-        graphql_headers(api),
-        JSON.json(payload);
-        status_exception = false,
-    )
-    response.status >= 400 && error("GraphQL request failed with HTTP status $(response.status).")
-    return isempty(response.body) ? Dict{String, Any}() : JSON.parse(response.body)
+    initialize_access_token!(client)
+    return client
 end
 
 end

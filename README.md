@@ -8,8 +8,8 @@ Basic usage:
 ```julia
 using WSAPI
 
-api = WSClient("~/.config/wsapi-token.json")
-response = api(
+client = WSClient("~/.config/wsapi-token.json")
+response = client(
     "query FetchAccounts(\$first: Int!) { accounts(first: \$first) { edges { node { id } } } }",
     "FetchAccounts",
     Dict("first" => 25),

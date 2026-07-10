@@ -8,7 +8,7 @@
 
     @test !hasfield(WSAPI.WSClient, :refresh_token)
 
-    api = WSAPI.WSClient(
+    client = WSAPI.WSClient(
         "tokens.txt",
         "cid",
         uuid4(),
@@ -19,9 +19,9 @@
         WSAPI.GRAPHQL_URL,
         Ref(WSAPI.AccessToken("access", Dates.now(Dates.UTC) + Dates.Second(15))),
     )
-    @test WSAPI.should_refresh(api)
-    api.access_token_ref[] = WSAPI.AccessToken("access", Dates.now(Dates.UTC) + Dates.Second(300))
-    @test !WSAPI.should_refresh(api)
+    @test WSAPI.should_refresh(client)
+    client.access_token_ref[] = WSAPI.AccessToken("access", Dates.now(Dates.UTC) + Dates.Second(300))
+    @test !WSAPI.should_refresh(client)
 
     created_at = round(Int, Dates.datetime2unix(Dates.now(Dates.UTC)))
     access_token = WSAPI.AccessToken("constructed", created_at, 120)
