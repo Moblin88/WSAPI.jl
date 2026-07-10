@@ -23,18 +23,25 @@
     @test !hasfield(WSAPI.WSClient, :refresh_token)
 
     noop_request = (args...) -> error("noop request should not be called")
-    api = WSAPI.WSClient("tokens.txt", "cid", "did", "sid", "access", Dates.now(Dates.UTC) + Dates.Second(15), ReentrantLock(), noop_request)
+    api = WSAPI.WSClient(
+        "tokens.txt",
+        "cid",
+        "did",
+        "sid",
+        ReentrantLock(),
+        noop_request,
+        Ref{Union{Nothing, WSAPI.AccessToken}}(WSAPI.AccessToken("access", Dates.now(Dates.UTC) + Dates.Second(15))),
+    )
     @test WSAPI.should_refresh(api)
-    api.access_token_expires_at = Dates.now(Dates.UTC) + Dates.Second(300)
+    api.access_token_ref[] = WSAPI.AccessToken("access", Dates.now(Dates.UTC) + Dates.Second(300))
     @test !WSAPI.should_refresh(api)
-    api.access_token_expires_at = nothing
-    @test !WSAPI.should_refresh(api)
-    api.access_token = nothing
+    api.access_token_ref[] = nothing
     @test !WSAPI.should_refresh(api)
 end
 
 @testitem "WSAPI mocked HTTP flow (reference-style)" begin
     using WSAPI
+    using Dates
     using HTTP
     using JSON
 
@@ -55,6 +62,7 @@ end
     mktempdir() do dir
         token_path = joinpath(dir, "token.txt")
         write(token_path, "old_refresh")
+        created_at = round(Int, Dates.datetime2unix(Dates.now(Dates.UTC)))
 
         login_body = "<html><head><script src=\"https://cdn.wealthsimple.com/app-1234abcd.js\"></script></head></html>"
         app_js_body = "\"production\"...,clientId:\"fedcba9876543210fedcba9876543210\""
@@ -63,7 +71,7 @@ end
             [
                 plain_response(200, login_body; headers = ["Set-Cookie" => "wssdi=a1b2c3d4-e5f6-7890-abcd-ef1234567890; Path=/;"]),
                 plain_response(200, app_js_body),
-                json_response(200, Dict("access_token" => "new_access", "refresh_token" => "new_refresh", "expires_in" => 3600)),
+                json_response(200, Dict("access_token" => "new_access", "refresh_token" => "new_refresh", "expires_in" => 3600, "created_at" => created_at)),
                 json_response(200, Dict("data" => Dict("ok" => true))),
             ],
             NamedTuple[],
@@ -72,7 +80,8 @@ end
         client = WSAPI.WSClient(token_path; request_fn = transport)
         @test client.device_id == "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
         @test client.client_id == "fedcba9876543210fedcba9876543210"
-        @test client.access_token == "new_access"
+        @test client.access_token_ref[].value == "new_access"
+        @test client.access_token_ref[].expiry == Dates.unix2datetime(created_at) + Dates.Second(3600)
         @test read(token_path, String) == "new_refresh"
 
         result = client("query Q{ok}", "Q")

@@ -14,15 +14,19 @@ const GRAPHQL_URL = URI("https://my.wealthsimple.com/graphql")
 const APP_JS_REGEX = r"""<script[^>]*src="([^"]*/app-[a-f0-9]+\.js)"""
 const CLIENT_ID_REGEX = r"\"production\"[^}]*clientId:\"([a-f0-9]+)\""
 
-mutable struct WSClient
+struct AccessToken
+    value::String
+    expiry::DateTime
+end
+
+struct WSClient
     token_file::String
     client_id::String
     device_id::String
     session_id::String
-    access_token::Union{Nothing, String}
-    access_token_expires_at::Union{Nothing, DateTime}
     refresh_lock::ReentrantLock
     request_fn
+    access_token_ref::Base.RefValue{Union{Nothing, AccessToken}}
 end
 
 function WSClient(token_file::AbstractString; request_fn = HTTP.request)
@@ -32,10 +36,9 @@ function WSClient(token_file::AbstractString; request_fn = HTTP.request)
         client_id,
         device_id,
         string(uuid4()),
-        nothing,
-        nothing,
         ReentrantLock(),
         request_fn,
+        Ref{Union{Nothing, AccessToken}}(nothing),
     )
     ensure_authorized!(api)
     return api
@@ -180,24 +183,32 @@ end
 function has_token_payload(payload::Dict{String, Any})
     haskey(payload, "access_token") || return false
     haskey(payload, "refresh_token") || return false
+    haskey(payload, "created_at") || return false
     return payload["access_token"] isa AbstractString &&
            payload["refresh_token"] isa AbstractString &&
+           payload["created_at"] isa Number &&
            !isempty(payload["access_token"]) &&
            !isempty(payload["refresh_token"])
 end
 
+access_token_value(api::WSClient) = isnothing(api.access_token_ref[]) ? nothing : api.access_token_ref[].value
+access_token_expiry(api::WSClient) = isnothing(api.access_token_ref[]) ? nothing : api.access_token_ref[].expiry
+
 function apply_token_payload!(api::WSClient, payload::Dict{String, Any})
-    api.access_token = String(payload["access_token"])
     expires_in = get(payload, "expires_in", 300)
     expiry_seconds = expires_in isa Number ? round(Int, Float64(expires_in)) : 300
-    api.access_token_expires_at = Dates.now(Dates.UTC) + Dates.Second(expiry_seconds)
+    created_at = payload["created_at"]
+    api.access_token_ref[] = AccessToken(
+        String(payload["access_token"]),
+        Dates.unix2datetime(round(Int, Float64(created_at))) + Dates.Second(expiry_seconds),
+    )
     return nothing
 end
 
 function should_refresh(api::WSClient)
-    return !isnothing(api.access_token) &&
-           !isnothing(api.access_token_expires_at) &&
-           (api.access_token_expires_at::DateTime) <= (Dates.now(Dates.UTC) + Dates.Second(30))
+    return !isnothing(access_token_value(api)) &&
+           !isnothing(access_token_expiry(api)) &&
+           (access_token_expiry(api)::DateTime) <= (Dates.now(Dates.UTC) + Dates.Second(30))
 end
 
 function maybe_refresh_nonblocking!(api::WSClient)
@@ -235,8 +246,9 @@ function graphql_headers(api::WSClient)
         "x-ws-device-id" => api.device_id,
         "x-ws-session-id" => api.session_id,
     ]
-    if !isnothing(api.access_token)
-        push!(headers, "Authorization" => "Bearer $(api.access_token)")
+    token_value = access_token_value(api)
+    if !isnothing(token_value)
+        push!(headers, "Authorization" => "Bearer $(token_value)")
     end
     return headers
 end
