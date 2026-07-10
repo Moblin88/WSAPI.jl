@@ -39,7 +39,7 @@ struct WSClient
 end
 
 function WSClient(
-    token_file::AbstractString;
+    token_file;
     login_page_url = LOGIN_PAGE_URL,
     oauth_token_url = OAUTH_TOKEN_URL,
     graphql_url = GRAPHQL_URL,
@@ -66,7 +66,7 @@ end
 to_uri(url::URI) = url
 to_uri(url::AbstractString) = URI(url)
 
-function bootstrap_device_and_client(login_page_url::URI)
+function bootstrap_device_and_client(login_page_url)
     login_response = HTTP.request("GET", login_page_url; cookies = false, status_exception = false)
     login_body = String(login_response.body)
     device_id = extract_device_id(login_response)
@@ -82,7 +82,7 @@ function bootstrap_device_and_client(login_page_url::URI)
     return device_id, client_match.captures[1]
 end
 
-function extract_device_id(response::HTTP.Response)
+function extract_device_id(response)
     cookies = HTTP.Cookies.cookies(response)
     for cookie in cookies
         cookie.name == "wssdi" && return String(cookie.value)
@@ -90,14 +90,14 @@ function extract_device_id(response::HTTP.Response)
     error("Unable to locate Wealthsimple device id (wssdi cookie).")
 end
 
-function read_refresh_token(path::AbstractString)
+function read_refresh_token(path)
     isfile(path) || return nothing
     content = read(path, String)
     isempty(content) && return nothing
     return content
 end
 
-function persist_refresh_token!(path::AbstractString, refresh_token::AbstractString)
+function persist_refresh_token!(path, refresh_token)
     write(path, refresh_token)
     return nothing
 end
@@ -111,7 +111,7 @@ function ensure_authorized!(api::WSClient)
     return api
 end
 
-function token_headers(api::WSClient, profile::AbstractString)
+function token_headers(api::WSClient, profile)
     return Pair{String, String}[
         "Content-Type" => "application/json",
         "x-wealthsimple-client" => "@wealthsimple/wealthsimple",
@@ -121,7 +121,7 @@ function token_headers(api::WSClient, profile::AbstractString)
     ]
 end
 
-function request_json(api::WSClient, method::AbstractString, url::Union{AbstractString, URI}; headers = Pair{String, String}[], body = nothing)
+function request_json(api::WSClient, method, url; headers = Pair{String, String}[], body = nothing)
     response = body === nothing ?
         HTTP.request(method, url, headers; status_exception = false) :
         HTTP.request(method, url, headers, JSON.json(body); status_exception = false)
@@ -197,7 +197,7 @@ function interactive_login!(api::WSClient)
     return nothing
 end
 
-function has_token_payload(payload::AbstractDict)
+function has_token_payload(payload)
     haskey(payload, "access_token") || return false
     haskey(payload, "refresh_token") || return false
     haskey(payload, "created_at") || return false
@@ -226,7 +226,7 @@ function maybe_refresh_nonblocking!(api::WSClient)
     return nothing
 end
 
-function build_variables(variables, kwargs::Base.Iterators.Pairs)
+function build_variables(variables, kwargs)
     merged = Dict{String, Any}()
     if !isnothing(variables)
         for (key, value) in pairs(variables)
@@ -256,7 +256,7 @@ function graphql_headers(api::WSClient)
     return headers
 end
 
-function (api::WSClient)(query::AbstractString, operation_name::AbstractString, variables = nothing; kwargs...)
+function (api::WSClient)(query, operation_name, variables = nothing; kwargs...)
     maybe_refresh_nonblocking!(api)
     payload = (
         query = query,
