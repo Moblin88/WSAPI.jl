@@ -3,13 +3,14 @@ module WSAPI
 using HTTP
 using JSON
 using Dates
+using URIs: URI, resolvereference
 using UUIDs
 
 export WSClient
 
-const LOGIN_PAGE_URL = "https://my.wealthsimple.com/app/login"
-const OAUTH_TOKEN_URL = "https://api.production.wealthsimple.com/v1/oauth/v2/token"
-const GRAPHQL_URL = "https://my.wealthsimple.com/graphql"
+const LOGIN_PAGE_URL = URI("https://my.wealthsimple.com/app/login")
+const OAUTH_TOKEN_URL = URI("https://api.production.wealthsimple.com/v1/oauth/v2/token")
+const GRAPHQL_URL = URI("https://my.wealthsimple.com/graphql")
 const APP_JS_REGEX = r"""<script[^>]*src="([^"]*/app-[a-f0-9]+\.js)"""
 const CLIENT_ID_REGEX = r"\"production\"[^}]*clientId:\"([a-f0-9]+)\""
 
@@ -41,14 +42,14 @@ function WSClient(token_file::AbstractString; request_fn = HTTP.request)
 end
 
 function bootstrap_device_and_client(request_fn)
-    login_response = request_fn("GET", LOGIN_PAGE_URL)
+    login_response = request_fn("GET", LOGIN_PAGE_URL; cookies = false)
     login_body = String(login_response.body)
     device_id = extract_device_id(login_response)
     script_match = match(APP_JS_REGEX, login_body)
     script_match === nothing && error("Unable to locate Wealthsimple app JavaScript URL.")
-    app_js_url = absolutize_wealthsimple_url(script_match.captures[1])
+    app_js_url = resolvereference(LOGIN_PAGE_URL, script_match.captures[1])
 
-    app_js_response = request_fn("GET", app_js_url)
+    app_js_response = request_fn("GET", app_js_url; cookies = false)
     app_js = String(app_js_response.body)
     client_match = match(CLIENT_ID_REGEX, app_js)
     client_match === nothing && error("Unable to locate Wealthsimple OAuth client id.")
@@ -62,13 +63,6 @@ function extract_device_id(response::HTTP.Response)
         cookie.name == "wssdi" && return String(cookie.value)
     end
     error("Unable to locate Wealthsimple device id (wssdi cookie).")
-end
-
-function absolutize_wealthsimple_url(url::AbstractString)
-    startswith(url, "http://") && return String(url)
-    startswith(url, "https://") && return String(url)
-    startswith(url, "/") && return "https://my.wealthsimple.com$(url)"
-    return "https://my.wealthsimple.com/$(url)"
 end
 
 function read_refresh_token(path::AbstractString)
@@ -102,8 +96,14 @@ function token_headers(api::WSClient, profile::AbstractString)
     ]
 end
 
-function request_json(api::WSClient, method::AbstractString, url::AbstractString; headers = Pair{String, String}[], body = nothing)
-    response = body === nothing ? api.request_fn(method, url, headers) : api.request_fn(method, url, headers, JSON.json(body))
+function request_json(api::WSClient, method::AbstractString, url::Union{AbstractString, URI}; headers = Pair{String, String}[], body = nothing)
+    response = if api.request_fn === HTTP.request
+        body === nothing ?
+            api.request_fn(method, url, headers; status_exception = false) :
+            api.request_fn(method, url, headers, JSON.json(body); status_exception = false)
+    else
+        body === nothing ? api.request_fn(method, url, headers) : api.request_fn(method, url, headers, JSON.json(body))
+    end
     text = String(response.body)
     payload = isempty(text) ? Dict{String, Any}() : JSON.parse(text)
     return response.status, payload
@@ -136,15 +136,15 @@ end
 function interactive_login!(api::WSClient)
     print("Wealthsimple username: ")
     username = chomp(readline(stdin))
-    password = String(Base.getpass("Wealthsimple password: "))
+    password = Base.shred!(readchomp, Base.getpass("Wealthsimple password"))
+    println()
     login_payload = (
         grant_type = "password",
         skip_provision = "true",
         username = username,
         password = password,
-        scope = "openid profile email offline_access",
-        client_id = api.client_id,
-        otp_claim = nothing,
+        scope = "read write",
+        client_id = api.client_id
     )
     status, payload = request_json(
         api,
@@ -155,7 +155,8 @@ function interactive_login!(api::WSClient)
     )
 
     if status >= 400 && get(payload, "error", "") == "invalid_grant"
-        otp = String(Base.getpass("Wealthsimple OTP code: "))
+        otp = Base.shred!(readchomp, Base.getpass("Wealthsimple OTP code"))
+        println()
         otp_headers = token_headers(api, "undefined")
         push!(otp_headers, "x-wealthsimple-otp" => "$(otp);remember=true")
         status, payload = request_json(

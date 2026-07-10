@@ -43,8 +43,8 @@ end
         requests::Vector{NamedTuple}
     end
 
-    function (mock::MockTransport)(method, url, headers = Pair{String, String}[], body = nothing)
-        push!(mock.requests, (method = method, url = String(url), headers = collect(headers), body = body))
+    function (mock::MockTransport)(method, url, headers = Pair{String, String}[], body = nothing; kwargs...)
+        push!(mock.requests, (method = method, url = string(url), headers = collect(headers), body = body, kwargs = NamedTuple(kwargs)))
         isempty(mock.responses) && error("No mock responses remaining for $(method) $(url)")
         return popfirst!(mock.responses)
     end
@@ -81,6 +81,7 @@ end
         @test length(transport.requests) == 4
         @test transport.requests[1].method == "GET"
         @test transport.requests[1].url == "https://my.wealthsimple.com/app/login"
+        @test get(transport.requests[1].kwargs, :cookies, true) == false
         @test transport.requests[2].method == "GET"
         @test occursin("app-1234abcd.js", transport.requests[2].url)
         @test transport.requests[3].method == "POST"
