@@ -16,7 +16,7 @@
         missing_path = joinpath(dir, "missing-token.txt")
         @test isnothing(WSAPI.read_refresh_token(missing_path))
 
-        WSAPI.persist_refresh_token!(token_path, "persisted-refresh")
+        write(token_path, "persisted-refresh")
         @test read(token_path, String) == "persisted-refresh"
     end
 

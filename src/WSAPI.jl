@@ -97,11 +97,6 @@ function read_refresh_token(path)
     return content
 end
 
-function persist_refresh_token!(path, refresh_token)
-    write(path, refresh_token)
-    return nothing
-end
-
 function ensure_authorized!(api::WSClient)
     if refresh_access_token!(api)
         return api
@@ -144,12 +139,12 @@ function refresh_access_token!(api::WSClient)
             client_id = api.client_id,
         ),
     )
-    if status >= 400 || !has_token_payload(payload)
+    if status >= 400
         return false
     end
 
     api.access_token_ref[] = AccessToken(payload["access_token"], payload["created_at"], payload["expires_in"])
-    persist_refresh_token!(api.token_file, String(payload["refresh_token"]))
+    write(api.token_file, payload["refresh_token"])
     return true
 end
 
@@ -188,21 +183,13 @@ function interactive_login!(api::WSClient)
         )
     end
 
-    if status >= 400 || !has_token_payload(payload)
+    if status >= 400
         error("Wealthsimple login failed.")
     end
 
     api.access_token_ref[] = AccessToken(payload["access_token"], payload["created_at"], payload["expires_in"])
-    persist_refresh_token!(api.token_file, String(payload["refresh_token"]))
+    write(api.token_file, payload["refresh_token"])
     return nothing
-end
-
-function has_token_payload(payload)
-    haskey(payload, "access_token") || return false
-    haskey(payload, "refresh_token") || return false
-    haskey(payload, "created_at") || return false
-    haskey(payload, "expires_in") || return false
-    return !isempty(String(payload["access_token"])) && !isempty(String(payload["refresh_token"]))
 end
 
 access_token_value(api::WSClient) = isnothing(api.access_token_ref[]) ? nothing : api.access_token_ref[].value
