@@ -13,35 +13,18 @@ const OAUTH_TOKEN_URL = URI("https://api.production.wealthsimple.com/v1/oauth/v2
 const GRAPHQL_URL = URI("https://my.wealthsimple.com/graphql")
 const APP_JS_REGEX = r"""<script[^>]*src="([^"]*/app-[a-f0-9]+\.js)"""
 const CLIENT_ID_REGEX = r"\"production\"[^}]*clientId:\"([a-f0-9]+)\""
-
-struct AccessToken
-    value::String
-    expiry::DateTime
-end
-
-"""
-    AccessToken(value, created_at, expires_in)
-
-Create an `AccessToken` from OAuth token fields where `created_at` is a Unix
-timestamp and `expires_in` is in seconds.
-"""
-function AccessToken(value, created_at, expires_in)
-    return AccessToken(
-        value,
-        Dates.unix2datetime(created_at) + Dates.Second(expires_in),
-    )
-end
-
-struct WSClient
-    token_file::String
-    client_id::String
-    device_id::UUID
-    session_id::UUID
-    refresh_lock::ReentrantLock
-    login_page_url::URI
-    oauth_token_url::URI
-    graphql_url::URI
-    access_token_ref::Base.RefValue{AccessToken}
+const TOKEN_EXPIRY_BUFFER = Dates.Second(30)  # Refresh 30 seconds before expiry
+mutable struct WSClient
+    const token_file::String
+    const client_id::String
+    const device_id::UUID
+    const session_id::UUID
+    const refresh_lock::ReentrantLock
+    const login_page_url::URI
+    const oauth_token_url::URI
+    const graphql_url::URI
+    access_token::Union{String, Nothing}
+    access_token_expiry::Union{DateTime, Nothing}
 end
 
 include("authentication.jl")
@@ -50,10 +33,9 @@ include("graphql.jl")
 """
     WSClient(token_file; login_page_url=LOGIN_PAGE_URL, oauth_token_url=OAUTH_TOKEN_URL, graphql_url=GRAPHQL_URL)
 
-Create an authenticated Wealthsimple client.
+Create a Wealthsimple client without authenticating.
 
-The constructor first tries to refresh using the token in `token_file`. If that
-fails, it falls back to interactive login and persists the new refresh token.
+Call `ensure_fresh!(client)` before requests that require authentication.
 """
 function WSClient(
     token_file;
@@ -72,9 +54,9 @@ function WSClient(
         URI(login_page_url),
         URI(oauth_token_url),
         URI(graphql_url),
-        Ref{AccessToken}(),
+        nothing,
+        nothing,
     )
-    initialize_access_token!(client)
     return client
 end
 

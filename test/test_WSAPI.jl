@@ -6,8 +6,6 @@
     @test WSAPI.build_variables(Dict(:a => 1, "b" => 2), pairs((c = 3, b = 4))) == Dict("a" => 1, "b" => 4, "c" => 3)
     @test WSAPI.build_variables(nothing, pairs((x = 1,))) == Dict("x" => 1)
 
-    @test !hasfield(WSAPI.WSClient, :refresh_token)
-
     client = WSAPI.WSClient(
         "tokens.txt",
         "cid",
@@ -17,19 +15,15 @@
         WSAPI.LOGIN_PAGE_URL,
         WSAPI.OAUTH_TOKEN_URL,
         WSAPI.GRAPHQL_URL,
-        Ref(WSAPI.AccessToken("access", Dates.now(Dates.UTC) + Dates.Second(15))),
+        "access",
+        Dates.now(Dates.UTC) + Dates.Second(15),
     )
-    @test WSAPI.should_refresh(client)
-    client.access_token_ref[] = WSAPI.AccessToken("access", Dates.now(Dates.UTC) + Dates.Second(300))
-    @test !WSAPI.should_refresh(client)
-
-    created_at = round(Int, Dates.datetime2unix(Dates.now(Dates.UTC)))
-    access_token = WSAPI.AccessToken("constructed", created_at, 120)
-    @test access_token.value == "constructed"
-    @test access_token.expiry == Dates.unix2datetime(created_at) + Dates.Second(120)
+    @test WSAPI.isstale(client)
+    client.access_token_expiry = Dates.now(Dates.UTC) + Dates.Second(300)
+    @test !WSAPI.isstale(client)
 end
 
-@testitem "WSAPI localhost HTTP flow (configurable endpoints)" begin
+@testitem "WSAPI localhost HTTP flow (caller-managed auth init)" begin
     using WSAPI
     using Dates
     using HTTP
@@ -88,8 +82,12 @@ end
             )
             @test client.device_id == UUID("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
             @test client.client_id == "fedcba9876543210fedcba9876543210"
-            @test client.access_token_ref[].value == "new_access"
-            @test client.access_token_ref[].expiry == Dates.unix2datetime(created_at) + Dates.Second(3600)
+            @test client.access_token === nothing
+            @test client.access_token_expiry === nothing
+
+            WSAPI.ensure_fresh!(client)
+            @test client.access_token == "new_access"
+            @test client.access_token_expiry == Dates.unix2datetime(created_at) + Dates.Second(3600)
             @test read(token_path, String) == "new_refresh"
 
             result = client("query Q{ok}", "Q")
@@ -109,6 +107,9 @@ end
             @test log.requests[4].target == "/graphql"
             graphql_payload = JSON.parse(log.requests[4].body)
             @test graphql_payload["operationName"] == "Q"
+            auth_headers = filter(h -> lowercase(String(h[1])) == "authorization", log.requests[4].headers)
+            @test length(auth_headers) == 1
+            @test String(auth_headers[1][2]) == "Bearer new_access"
         finally
             close(server)
             wait(server.serve_task)

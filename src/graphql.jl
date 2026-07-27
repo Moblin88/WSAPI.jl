@@ -33,6 +33,8 @@ end
 Build GraphQL request headers for the authenticated client.
 """
 function graphql_headers(client)
+    token = client.access_token
+    token === nothing && error("WSClient is not authenticated. Call ensure_fresh!(client) before making GraphQL requests.")
     headers = [
         "Content-Type" => "application/json",
         "x-ws-profile" => "trade",
@@ -41,7 +43,7 @@ function graphql_headers(client)
         "x-platform-os" => "web",
         "x-ws-device-id" => string(client.device_id),
         "x-ws-session-id" => string(client.session_id),
-        "Authorization" => "Bearer $(client.access_token_ref[].value)",
+        "Authorization" => "Bearer $(token)",
     ]
     return headers
 end
@@ -55,7 +57,7 @@ Execute a GraphQL request with the authenticated `client`.
 precedence for duplicate keys.
 """
 function (client::WSClient)(query, operation_name, variables = nothing; kwargs...)
-    maybe_refresh_nonblocking!(client)
+    ensure_fresh!(client)
     payload = (
         query = query,
         operationName = operation_name,

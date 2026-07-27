@@ -31,11 +31,11 @@ function extract_device_id(response)
 end
 
 """
-    token_headers(device_id, session_id, profile)
+    token_headers(client, profile)
 
 Build shared OAuth request headers for token-related endpoints.
 """
-function token_headers(device_id, session_id, profile)
+function token_headers((;device_id, session_id), profile)
     return [
         "Content-Type" => "application/json",
         "x-wealthsimple-client" => "@wealthsimple/wealthsimple",
@@ -44,6 +44,12 @@ function token_headers(device_id, session_id, profile)
         "x-ws-session-id" => string(session_id),
     ]
 end
+
+function isstale((;access_token_expiry))
+    access_token_expiry === nothing && return true
+    return access_token_expiry <= now(Dates.UTC) + TOKEN_EXPIRY_BUFFER
+end
+
 
 """
     refresh_access_token!(client) -> Bool
@@ -60,7 +66,7 @@ function refresh_access_token!(client)
     response = HTTP.request(
         "POST",
         client.oauth_token_url,
-        token_headers(client.device_id, client.session_id, "invest"),
+        token_headers(client, "undefined"),
         JSON.json((
             grant_type = "refresh_token",
             refresh_token = refresh_token,
@@ -68,14 +74,13 @@ function refresh_access_token!(client)
         ));
         status_exception = false,
     )
-    status = response.status
-    payload = isempty(response.body) ? Dict{String, Any}() : JSON.parse(response.body)
-    if status >= 400
-        return false
-    end
+    response.status >= 400 && return false
+
+    payload = JSON.parse(response.body)
 
     write(client.token_file, payload["refresh_token"])
-    client.access_token_ref[] = AccessToken(payload["access_token"], payload["created_at"], payload["expires_in"])
+    client.access_token = payload["access_token"]
+    client.access_token_expiry = Dates.unix2datetime(payload["created_at"] + payload["expires_in"])
     return true
 end
 
@@ -96,78 +101,57 @@ function interactive_login!(client)
         username = username,
         password = password,
         scope = "read write",
-        client_id = client.client_id,
+        client_id = client.client_id
     )
+    login_json = JSON.json(login_payload)
     response = HTTP.request(
         "POST",
         client.oauth_token_url,
-        token_headers(client.device_id, client.session_id, "undefined"),
-        JSON.json(login_payload);
-        status_exception = false,
+        token_headers(client, "undefined"),
+        login_json;
+        status_exception = false
     )
     status = response.status
-    payload = isempty(response.body) ? Dict{String, Any}() : JSON.parse(response.body)
+    payload = JSON.parse(response.body)
 
     if status >= 400 && get(payload, "error", "") == "invalid_grant"
         otp = Base.shred!(readchomp, Base.getpass("Wealthsimple OTP code"))
         println()
-        otp_headers = token_headers(client.device_id, client.session_id, "undefined")
+        otp_headers = token_headers(client, "undefined")
         push!(otp_headers, "x-wealthsimple-otp" => "$(otp);remember=true")
         response = HTTP.request(
             "POST",
             client.oauth_token_url,
             otp_headers,
-            JSON.json(login_payload);
+            login_json;
             status_exception = false,
         )
         status = response.status
-        payload = isempty(response.body) ? Dict{String, Any}() : JSON.parse(response.body)
+        payload = JSON.parse(response.body)
     end
 
     if status >= 400
         error("Wealthsimple login failed.")
     end
 
-    client.access_token_ref[] = AccessToken(payload["access_token"], payload["created_at"], payload["expires_in"])
     write(client.token_file, payload["refresh_token"])
+    client.access_token = payload["access_token"]
+    client.access_token_expiry = Dates.unix2datetime(payload["created_at"] + payload["expires_in"])
     return nothing
 end
 
 """
-    initialize_access_token!(client)
+    ensure_fresh!(client)
 
-Initialize client authentication by trying refresh first, then falling back to
-interactive login.
+Ensure `client` has a fresh access token. Tries refresh-token flow first, then
+falls back to interactive login when refresh is unavailable or fails.
 """
-function initialize_access_token!(client)
-    if refresh_access_token!(client)
-        return nothing
-    end
-    interactive_login!(client)
-    return nothing
-end
-
-"""
-    should_refresh(client) -> Bool
-
-Return `true` when the current access token expires within 30 seconds.
-"""
-function should_refresh(client)
-    return client.access_token_ref[].expiry <= (Dates.now(Dates.UTC) + Dates.Second(30))
-end
-
-"""
-    maybe_refresh_nonblocking!(client)
-
-Attempt a best-effort token refresh without blocking if another thread is
-already handling refresh.
-"""
-function maybe_refresh_nonblocking!(client)
-    should_refresh(client) || return nothing
-    trylock(client.refresh_lock) || return nothing
+function ensure_fresh!(client)
+    !isstale(client) && return nothing
+    lock(client.refresh_lock)
     try
-        should_refresh(client) || return nothing
-        refresh_access_token!(client)
+        !isstale(client) && return nothing
+        refresh_access_token!(client) || interactive_login!(client)
     finally
         unlock(client.refresh_lock)
     end
