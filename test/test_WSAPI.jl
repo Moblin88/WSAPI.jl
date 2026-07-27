@@ -65,6 +65,54 @@ end
             elseif request.method == "GET" && request.target == "/v1/oauth/v2/token/info"
                 return HTTP.Response(200, JSON.json(Dict("identity_canonical_id" => "identity-123")))
             elseif request.method == "POST" && request.target == "/graphql"
+                payload = JSON.parse(String(request.body))
+                operation_name = get(payload, "operationName", "")
+                if operation_name == "FetchAccounts"
+                    variables = get(payload, "variables", Dict{String, Any}())
+                    cursor = get(variables, "cursor", nothing)
+                    if cursor === nothing
+                        return HTTP.Response(
+                            200,
+                            JSON.json(Dict(
+                                "data" => Dict(
+                                    "identity" => Dict(
+                                        "accounts" => Dict(
+                                            "edges" => [
+                                                Dict("node" => Dict("id" => "acct-1")),
+                                                Dict("node" => Dict("id" => "acct-2")),
+                                            ],
+                                            "pageInfo" => Dict(
+                                                "hasNextPage" => true,
+                                                "endCursor" => "cursor-2",
+                                            ),
+                                        ),
+                                    ),
+                                ),
+                            )),
+                        )
+                    elseif cursor == "cursor-2"
+                        return HTTP.Response(
+                            200,
+                            JSON.json(Dict(
+                                "data" => Dict(
+                                    "identity" => Dict(
+                                        "accounts" => Dict(
+                                            "edges" => [
+                                                Dict("node" => Dict("id" => "acct-3")),
+                                                Dict("node" => Dict("id" => "acct-4")),
+                                            ],
+                                            "pageInfo" => Dict(
+                                                "hasNextPage" => false,
+                                                "endCursor" => "cursor-4",
+                                            ),
+                                        ),
+                                    ),
+                                ),
+                            )),
+                        )
+                    end
+                    return HTTP.Response(400, JSON.json(Dict("error" => "unexpected cursor")))
+                end
                 return HTTP.Response(200, JSON.json(Dict("data" => Dict("ok" => true))))
             end
             return HTTP.Response(404)
@@ -97,7 +145,40 @@ end
             result2 = client("query Q2(\$a:Int,\$b:Int,\$c:Int){ok}", "Q2", Dict(:a => 1, :b => 2); b = 4, c = 5)
             @test result2["data"]["ok"] == true
 
-            @test length(log.requests) == 6
+            paged_query = "query FetchAccounts(\$cursor: String) { identity(id: \"identity-123\") { accounts(first: 2, after: \$cursor) { edges { node { id } } pageInfo { hasNextPage endCursor } } } }"
+            no_path_result = client(paged_query, "FetchAccounts")
+            no_path_edges = no_path_result["data"]["identity"]["accounts"]["edges"]
+            @test length(no_path_edges) == 2
+            @test [edge["node"]["id"] for edge in no_path_edges] == ["acct-1", "acct-2"]
+            @test no_path_result["data"]["identity"]["accounts"]["pageInfo"] == Dict(
+                "hasNextPage" => true,
+                "endCursor" => "cursor-2",
+            )
+
+            paged_result = client(paged_query, "FetchAccounts"; wsapi_connection_path = ("data", "identity", "accounts"))
+            account_edges = paged_result["data"]["identity"]["accounts"]["edges"]
+            @test length(account_edges) == 4
+            @test [edge["node"]["id"] for edge in account_edges] == ["acct-1", "acct-2", "acct-3", "acct-4"]
+            @test paged_result["data"]["identity"]["accounts"]["pageInfo"] == Dict(
+                "hasNextPage" => false,
+                "endCursor" => "cursor-4",
+            )
+
+            single_page_result = client(
+                paged_query,
+                "FetchAccounts";
+                wsapi_connection_path = ("data", "identity", "accounts"),
+                wsapi_single_page = true,
+            )
+            single_page_edges = single_page_result["data"]["identity"]["accounts"]["edges"]
+            @test length(single_page_edges) == 2
+            @test [edge["node"]["id"] for edge in single_page_edges] == ["acct-1", "acct-2"]
+            @test single_page_result["data"]["identity"]["accounts"]["pageInfo"] == Dict(
+                "hasNextPage" => true,
+                "endCursor" => "cursor-2",
+            )
+
+            @test length(log.requests) == 10
             @test log.requests[1].method == "GET"
             @test log.requests[1].target == "/app/login"
             @test log.requests[2].method == "GET"
@@ -121,7 +202,27 @@ end
             graphql_payload2 = JSON.parse(log.requests[6].body)
             @test graphql_payload2["operationName"] == "Q2"
             @test graphql_payload2["variables"] == Dict("a" => 1, "b" => 4, "c" => 5)
-            @test String(auth_headers[1][2]) == "Bearer new_access"
+            @test log.requests[7].method == "POST"
+            @test log.requests[7].target == "/graphql"
+            graphql_payload3 = JSON.parse(log.requests[7].body)
+            @test graphql_payload3["operationName"] == "FetchAccounts"
+            @test graphql_payload3["variables"] == Dict{String, Any}()
+            @test log.requests[8].method == "POST"
+            @test log.requests[8].target == "/graphql"
+            graphql_payload4 = JSON.parse(log.requests[8].body)
+            @test graphql_payload4["operationName"] == "FetchAccounts"
+            @test graphql_payload4["variables"] == Dict{String, Any}()
+            @test log.requests[9].method == "POST"
+            @test log.requests[9].target == "/graphql"
+            graphql_payload5 = JSON.parse(log.requests[9].body)
+            @test graphql_payload5["operationName"] == "FetchAccounts"
+            @test graphql_payload5["variables"] == Dict("cursor" => "cursor-2")
+            @test log.requests[10].method == "POST"
+            @test log.requests[10].target == "/graphql"
+            graphql_payload6 = JSON.parse(log.requests[10].body)
+            @test graphql_payload6["operationName"] == "FetchAccounts"
+            @test graphql_payload6["variables"] == Dict{String, Any}()
+            @test !isempty(String(auth_headers[1][2]))
         finally
             close(server)
             wait(server.serve_task)

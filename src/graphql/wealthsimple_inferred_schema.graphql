@@ -1,0 +1,991 @@
+"""
+Inferred Wealthsimple GraphQL SDL derived from query documents in:
+https://github.com/gboudreau/ws-api-php (src/WealthsimpleAPI.php)
+and additional GraphQL operations embedded in the public Wealthsimple SPA bundle.
+
+This is intentionally approximate and query-driven (not introspection-derived).
+"""
+
+schema {
+  query: Query
+  mutation: Mutation
+  subscription: Subscription
+}
+
+scalar Date
+scalar DateTime
+scalar Cursor
+scalar Currency
+scalar JSON
+scalar ISO8601DateTime
+
+enum ActivitiesOrderBy {
+  OCCURRED_AT_DESC
+  OCCURRED_AT_ASC
+}
+
+enum AccountScope {
+  OWN
+  ALL
+}
+
+enum DateResolution {
+  DAILY
+  WEEKLY
+  MONTHLY
+}
+
+enum TradingSession {
+  REGULAR
+  OVERNIGHT
+}
+
+enum ChartPeriod {
+  ONE_DAY
+  ONE_MONTH
+  THREE_MONTHS
+  YEAR_TO_DATE
+  ONE_YEAR
+  FIVE_YEARS
+  ALL
+}
+
+enum BalanceType {
+  TRADING
+  SETTLED
+  CASH
+  TOTAL
+}
+
+type Query {
+  identity(id: ID!): Identity
+  accounts(ids: [String!]!): [Account!]!
+  account(id: ID!): Account
+  security(id: ID!): Security
+  securitySearch(input: SecuritySearchInput!): SecuritySearchPayload!
+  activityFeedItems(
+    first: Int
+    after: Cursor
+    condition: ActivityCondition
+    orderBy: [ActivitiesOrderBy!] = [OCCURRED_AT_DESC]
+  ): ActivityFeedItemConnection!
+  fundsTransfer(id: ID!, include_cancelled: Boolean): FundsTransfer
+  accountTransfer(id: ID!): InstitutionalTransfer
+  corporateActionChildActivities(
+    condition: CorporateActionChildActivitiesCondition!
+  ): CorporateActionChildActivitiesPayload!
+  brokerageMonthlyStatements(period: String!, accountId: String!): [BrokerageMonthlyStatement!]!
+  creditCardAccount(id: ID!): CreditCardAccount
+  transfer(id: ID!): Transfer
+  search_transfers(filter: SearchTransfersFilterInput): SearchTransfersPayload
+  creditCardActivities(
+    creditAccountId: String!
+    endDate: ISO8601DateTime
+    first: Int
+    startDate: ISO8601DateTime
+    statuses: [CreditCardActivityStatusEnum!]
+  ): CreditCardActivitiesPayload
+  dataRequestsByIdentity(identityId: ID!): [DataRequest!]!
+  zendeskDecagonPublicAuth: PublicZendeskDecagonAuth
+  employeesBreakdownByStatus(employerId: String!): EmployeesBreakdownByStatus
+}
+
+type Mutation {
+  accountsCloseAsync(input: AccountsCloseAsyncInput!): AccountsCloseAsyncPayload
+  update_transfer_state(input: UpdateTransferStateInput!): Transfer
+  transfer_staff_update(input: TransferStaffUpdateMutationInput!): Transfer
+  reissueCard(input: ReissueCardInput!): ReissueCardPayload
+  resetCreditCardPINRetryCounter(
+    input: ResetCreditCardPINRetryCounterInput!
+  ): ResetCreditCardPINRetryCounterResult
+  unblockCreditCard(input: UnblockCreditCardInput!): UnblockCreditCardResult
+  personalDataUpdate(input: PersonalDataUpdateInput!): PersonalDataUpdatePayload
+  signDocumentUrl(bucket: String, key: String!): SignedDocumentUrl
+}
+
+type Subscription {
+  securityQuoteUpdates(id: ID!): SecurityQuoteUpdate
+}
+
+input SecuritySearchInput {
+  query: String!
+}
+
+input ActivityCondition {
+  startDate: Date
+  endDate: Date
+  accountIds: [ID!]
+}
+
+input CorporateActionChildActivitiesCondition {
+  activityCanonicalId: String!
+}
+
+input AccountsFilter {
+  accountIds: [ID!]
+  accountTypes: [String!]
+}
+
+input IdentityFinancialsFilter {
+  accounts: [ID!]
+}
+
+input PositionsFilter {
+  securityIds: [ID!]
+}
+
+input SearchTransfersFilterInput {
+  account_ids: [ID!]
+}
+
+input AccountsCloseAsyncInput {
+  accountIds: [ID!]!
+}
+
+input UpdateTransferStateInput {
+  transferId: ID
+  event: String
+  transitionCode: String
+  notes: String
+}
+
+input TransferStaffUpdateMutationInput {
+  id: ID
+  transitionCode: String
+  notes: String
+  pdf_url: String
+}
+
+input ReissueCardInput {
+  cardCanonicalId: ID
+  reason: String
+}
+
+input ResetCreditCardPINRetryCounterInput {
+  cardCanonicalId: ID!
+}
+
+input UnblockCreditCardInput {
+  cardCanonicalId: String!
+}
+
+input PersonalDataUpdateInput {
+  identityId: ID
+  payload: JSON
+}
+
+enum CreditCardActivityStatusEnum {
+  PENDING
+  POSTED
+  DECLINED
+  REVERSED
+}
+
+type PageInfo {
+  hasNextPage: Boolean!
+  endCursor: Cursor
+}
+
+type Money {
+  amount: String
+  cents: Int
+  currency: Currency
+}
+
+type Identity {
+  id: ID!
+  accounts(filter: AccountsFilter, first: Int, after: Cursor): AccountConnection!
+  financials(filter: IdentityFinancialsFilter, accountScope: AccountScope): IdentityFinancials
+  zendeskDecagonAuth(useV2: Boolean): IdentityZendeskDecagonAuth
+}
+
+type IdentityFinancials {
+  current(currency: Currency, startDate: Date): IdentityCurrentFinancials
+  historicalDaily(
+    currency: Currency!
+    startDate: Date
+    endDate: Date
+    first: Int
+    after: Cursor
+  ): IdentityHistoricalDailyConnection!
+  realizedReturns(currency: Currency!, startDate: Date): RealizedReturns
+  dividendsV2(startDate: Date, currency: Currency!): DividendsV2
+}
+
+type IdentityCurrentFinancials {
+  netLiquidationValueV2: Money
+  netDepositsV2: Money
+  simpleReturns(referenceDate: Date): SimpleReturns
+  totalDepositsV2: Money
+  totalWithdrawalsV2: Money
+  positions(filter: PositionsFilter): PositionConnection!
+}
+
+type SimpleReturns {
+  amount: Money
+  asOf: DateTime
+  rate: Float
+  referenceDate: Date
+}
+
+type AccountConnection {
+  edges: [AccountEdge!]!
+  pageInfo: PageInfo!
+}
+
+type AccountEdge {
+  cursor: Cursor
+  node: Account!
+}
+
+type Account {
+  id: ID!
+  archivedAt: DateTime
+  branch: String
+  closedAt: DateTime
+  createdAt: DateTime
+  cacheExpiredAt: DateTime
+  currency: Currency
+  requiredIdentityVerification: Boolean
+  unifiedAccountType: String
+  supportedCurrencies: [Currency!]
+  compatibleCurrencies: [Currency!]
+  nickname: String
+  status: String
+  accountOwnerConfiguration: String
+  type: String
+  accountFeatures: [AccountFeature!]
+  accountOwners: [AccountOwner!]
+  accountEntityRelationships: [AccountEntityRelationship!]
+  accountUpgradeProcesses: [AccountUpgradeProcess!]
+  custodianAccounts: [CustodianAccount!]
+  linkedAccount: Account
+  financials: AccountFinancials
+  activities(
+    sort: ActivitySortInput
+    start: String
+    end: String
+    range_field: String
+    activity_types: [String]
+  ): [PortfolioActivity!]
+}
+
+type AccountFeature {
+  name: String
+  enabled: Boolean
+  functional: Boolean
+  firstEnabledOn: Date
+}
+
+type AccountOwner {
+  accountId: ID
+  identityId: ID
+  accountNickname: String
+  clientCanonicalId: String
+  accountOpeningAgreementsSigned: Boolean
+  name: String
+  email: String
+  ownershipType: String
+  activeInvitation: AccountOwnerInvitation
+  sentInvitations: [AccountOwnerInvitation!]
+}
+
+type AccountOwnerInvitation {
+  id: ID
+  createdAt: DateTime
+  inviteeName: String
+  inviteeEmail: String
+  inviterName: String
+  inviterEmail: String
+  updatedAt: DateTime
+  sentAt: DateTime
+  status: String
+}
+
+type AccountEntityRelationship {
+  accountCanonicalId: String
+  entityCanonicalId: String
+  entityOwnershipType: String
+  entityType: String
+}
+
+type AccountUpgradeProcess {
+  canonicalId: String
+  status: String
+  targetAccountType: String
+}
+
+type CustodianAccount {
+  id: ID
+  branch: String
+  custodian: String
+  status: String
+  updatedAt: DateTime
+  financials: CustodianAccountFinancialsSo
+}
+
+type CustodianAccountFinancialsSo {
+  current: CustodianAccountCurrentFinancialValues
+  balance(type: BalanceType!): [Balance!]
+}
+
+type CustodianAccountCurrentFinancialValues {
+  deposits: Money
+  earnings: Money
+  netDeposits: Money
+  netLiquidationValue: Money
+  withdrawals: Money
+}
+
+type Balance {
+  quantity: Float
+  securityId: ID
+}
+
+type AccountFinancials {
+  currentCombined(currency: Currency): AccountCurrentFinancials
+  historicalDaily(
+    currency: Currency!
+    startDate: Date
+    resolution: DateResolution!
+    endDate: Date
+    first: Int
+    after: Cursor
+  ): AccountHistoricalDailyConnection!
+}
+
+type AccountCurrentFinancials {
+  id: ID
+  netLiquidationValue: Money
+  netLiquidationValueV2: Money
+  netDeposits: Money
+  netDepositsV2: Money
+  simpleReturns(referenceDate: Date): SimpleReturns
+  totalDeposits: Money
+  totalDepositsV2: Money
+  totalWithdrawals: Money
+  totalWithdrawalsV2: Money
+  unrealizedPnL: UnrealizedPnL
+}
+
+type UnrealizedPnL {
+  amount: Money
+  rate: Float
+}
+
+type AccountHistoricalDailyConnection {
+  edges: [AccountHistoricalDailyEdge!]!
+  pageInfo: PageInfo!
+}
+
+type AccountHistoricalDailyEdge {
+  node: AccountHistoricalDailyFinancials!
+}
+
+type AccountHistoricalDailyFinancials {
+  date: Date
+  netLiquidationValueV2: Money
+  netDepositsV2: Money
+}
+
+type IdentityHistoricalDailyConnection {
+  edges: [IdentityHistoricalDailyEdge!]!
+  pageInfo: PageInfo!
+}
+
+type IdentityHistoricalDailyEdge {
+  node: IdentityHistoricalDailyFinancials!
+}
+
+type IdentityHistoricalDailyFinancials {
+  date: Date
+  netLiquidationValueV2: Money
+  netDepositsV2: Money
+}
+
+type PositionConnection {
+  edges: [PositionEdge!]!
+  pageInfo: PageInfo!
+}
+
+type PositionEdge {
+  node: Position!
+}
+
+type Position {
+  securityId: ID
+  quantity: Float
+  marketValue: Money
+  averageCost: Money
+  accountId: ID
+}
+
+type RealizedReturns {
+  totalValue: Money
+  securityBreakdown(first: Int, after: Cursor): SecurityBreakdownConnection!
+}
+
+type SecurityBreakdownConnection {
+  edges: [SecurityBreakdownEdge!]!
+  pageInfo: PageInfo!
+}
+
+type SecurityBreakdownEdge {
+  node: SecurityBreakdownItem!
+}
+
+type SecurityBreakdownItem {
+  security: Security
+  totalValue: Money
+}
+
+type DividendsV2 {
+  totalValue: Money
+  issuingSecurityBreakdown: [IssuingSecurityBreakdown!]
+}
+
+type IssuingSecurityBreakdown {
+  security: Security
+  totalValue: Money
+}
+
+type SecuritySearchPayload {
+  results: [Security!]!
+}
+
+type Security {
+  id: ID!
+  buyable: Boolean
+  status: String
+  securityGroups: [SecurityGroup!]
+  stock: Stock
+  quoteV2: EquityQuote
+  historicalQuotes(timeRange: String!): [HistoricalQuote!]
+  marginRates: MarginRates
+  managementExpenseRatio: Float
+  fundamentals(currency: Currency): Fundamentals
+  events: [SecurityEvent!]
+  allowedOrderSubtypes: [String!]
+  chartBarQuotes(
+    date: Date
+    tradingSession: TradingSession
+    currency: Currency
+    period: ChartPeriod
+  ): [ChartBarQuote!]
+  currency: Currency
+}
+
+type SecurityGroup {
+  id: ID
+  name: String
+}
+
+type EquityQuote {
+  marketStatus: String
+}
+
+type HistoricalQuote {
+  adjustedPrice: Float
+  currency: Currency
+  date: Date
+  securityId: ID
+  time: DateTime
+}
+
+type MarginRates {
+  clientMarginRate: Float
+}
+
+type Fundamentals {
+  avgVolume: Float
+  beta: Float
+  circulatingSupply: Float
+  companyCash: Float
+  companyCeo: String
+  companyDebt: Float
+  companyEarningsGrowth: Float
+  companyGrossProfitMargin: Float
+  companyHqLocation: String
+  companyRevenue: Float
+  currency: Currency
+  dailyVolume: Float
+  description: String
+  eps: Float
+  high52Week: Float
+  inceptionYear: Int
+  low52Week: Float
+  marketCap: Float
+  numberOfEmployees: Int
+  peRatio: Float
+  sharesOutstanding: Float
+  totalAssets: Float
+  totalSupply: Float
+  yield: Float
+}
+
+type Stock {
+  symbol: String
+  name: String
+  primaryExchange: String
+  description: String
+  dividendFrequency: String
+  ipoState: String
+  leverageRatio: Float
+  primaryMic: String
+  segmentMic: String
+  usPtp: Boolean
+}
+
+type SecurityEvent {
+  exDividendDate: Date
+  payableDate: Date
+  recordDate: Date
+}
+
+type ChartBarQuote {
+  securityId: ID
+  price: Float
+  sessionPrice: Float
+  timestamp: DateTime
+  currency: Currency
+  marketStatus: String
+}
+
+type ActivityFeedItemConnection {
+  edges: [ActivityFeedItemEdge!]!
+  pageInfo: PageInfo!
+}
+
+type ActivityFeedItemEdge {
+  node: ActivityFeedItem!
+}
+
+type ActivityFeedItem {
+  accountId: ID
+  aftOriginatorName: String
+  aftTransactionCategory: String
+  aftTransactionType: String
+  amount: String
+  amountSign: String
+  assetQuantity: String
+  assetSymbol: String
+  canonicalId: String
+  currency: Currency
+  eTransferEmail: String
+  eTransferName: String
+  externalCanonicalId: String
+  identityId: ID
+  institutionName: String
+  occurredAt: DateTime
+  p2pHandle: String
+  p2pMessage: String
+  spendMerchant: String
+  securityId: ID
+  billPayCompanyName: String
+  billPayPayeeNickname: String
+  redactedExternalAccountNumber: String
+  opposingAccountId: ID
+  status: String
+  subType: String
+  type: String
+  strikePrice: String
+  contractType: String
+  expiryDate: Date
+  chequeNumber: String
+  provisionalCreditAmount: String
+  primaryBlocker: String
+  interestRate: Float
+  frequency: String
+  counterAssetSymbol: String
+  rewardProgram: String
+  counterPartyCurrency: Currency
+  counterPartyCurrencyAmount: String
+  counterPartyName: String
+  fxRate: Float
+  fees: String
+  reference: String
+}
+
+type FundsTransfer {
+  id: ID
+  status: String
+  cancellable: Boolean
+  rejectReason: String
+  schedule: FundsTransferSchedule
+  source: BankAccountOwner
+  destination: BankAccountOwner
+}
+
+type FundsTransferSchedule {
+  id: ID
+}
+
+type BankAccountOwner {
+  bankAccount: BankAccount
+}
+
+type BankAccount {
+  id: ID
+  accountName: String
+  corporate: Boolean
+  createdAt: DateTime
+  currency: Currency
+  institutionName: String
+  jurisdiction: String
+  nickname: String
+  type: String
+  updatedAt: DateTime
+  accountNumber: String
+  verificationDocuments: [VerificationDocument!]
+  verifications: [BankAccountVerification!]
+}
+
+type VerificationDocument {
+  id: ID
+  acceptable: Boolean
+  updatedAt: DateTime
+  createdAt: DateTime
+  documentId: String
+  documentType: String
+  rejectReason: String
+  reviewedAt: DateTime
+  reviewedBy: String
+}
+
+type BankAccountVerification {
+  custodianProcessedAt: DateTime
+  custodianStatus: String
+  document: VerificationDocument
+}
+
+type InstitutionalTransfer {
+  id: ID
+  accountId: ID
+  state: String
+  documentId: String
+  documentType: String
+  expectedCompletionDate: Date
+  timelineExpectation: TimelineExpectation
+  estimatedCompletionMaximum: Date
+  estimatedCompletionMinimum: Date
+  institutionName: String
+  transferStatus: String
+  redactedInstitutionAccountNumber: String
+  expectedValue: Money
+  transferType: String
+  cancellable: Boolean
+  pdfUrl: String
+  clientVisibleState: String
+  shortStatusDescription: String
+  longStatusDescription: String
+  progressPercentage: Float
+  type: String
+  rolloverType: String
+  autoSignatureEligible: Boolean
+  parentInstitution: Institution
+  stateHistories: [InstitutionalTransferStateHistory!]
+  transferFeeReimbursement: TransferFeeReimbursement
+  docusignSentViaEmail: Boolean
+  clientAccountType: String
+  primaryClientIdentityId: ID
+  primaryOwnerSigned: Boolean
+  secondaryOwnerSigned: Boolean
+}
+
+type TimelineExpectation {
+  lowerBound: Date
+  upperBound: Date
+}
+
+type Institution {
+  id: ID
+  name: String
+}
+
+type InstitutionalTransferStateHistory {
+  id: ID
+  state: String
+  notes: String
+  transitionSubmittedBy: String
+  transitionedAt: DateTime
+  transitionCode: String
+}
+
+type TransferFeeReimbursement {
+  id: ID
+  feeAmount: Money
+}
+
+type CorporateActionChildActivitiesPayload {
+  nodes: [CorporateActionChildActivity!]!
+}
+
+type CorporateActionChildActivity {
+  canonicalId: String
+  activityCanonicalId: String
+  assetName: String
+  assetSymbol: String
+  assetType: String
+  entitlementType: String
+  quantity: Float
+  currency: Currency
+  price: Float
+  recordDate: Date
+}
+
+type BrokerageMonthlyStatement {
+  id: ID
+  statementType: String
+  createdAt: DateTime
+  data: BrokerageMonthlyStatementObject
+}
+
+type BrokerageMonthlyStatementObject {
+  custodianAccountId: ID
+  activitiesPerCurrency: [BrokerageActivitiesPerCurrency!]
+  currentTransactions: BrokerageMonthlyStatementTransactions
+  isMultiCurrency: Boolean
+}
+
+type BrokerageActivitiesPerCurrency {
+  currency: Currency
+  currentTransactions: BrokerageMonthlyStatementTransactions
+}
+
+type BrokerageMonthlyStatementTransactions {
+  beginningBalance: Money
+  endingBalance: Money
+  transactions: [JSON!]
+}
+
+type CreditCardAccount {
+  id: ID
+  accountNumber: String
+  status: String
+  balance: Money
+  availableCredit: Money
+  creditLimit: Money
+  payments: [JSON!]
+  metadata: JSON
+  pinCounterState: String
+  cardNumber: String
+  cardStatus: String
+}
+
+type AccountsCloseAsyncPayload {
+  request: AsyncRequest
+}
+
+type AsyncRequest {
+  id: ID
+  status: String
+}
+
+type SignedDocumentUrl {
+  downloadUrl: String
+}
+
+type Transfer {
+  id: ID
+  state: String
+  permitted_events: [String!]
+  transition_codes: [TransferTransitionCode!]
+  transfer_type: String
+  client_given_name: String
+  client_surname: String
+  client_address: MailingAddress
+  relinquishing_account: RelinquishingAccount
+  account: TransferLinkedAccount
+  state_histories: [TransferStateHistory!]
+  institution_name: String
+  institution_account_number: String
+  client_account_number: String
+  created_at: ISO8601DateTime
+  updated_at: ISO8601DateTime
+  expected_value: Money
+  pdf_url: String
+}
+
+type TransferTransitionCode {
+  codes: [String!]
+  transition: String
+}
+
+type MailingAddress {
+  apt_number: String
+  city: String
+  country: String
+  postal_code: String
+  province_or_state: String
+  street_name: String
+  street_number: String
+}
+
+type RelinquishingAccount {
+  institution: TransferInstitution
+  account_number: String
+}
+
+type TransferInstitution {
+  id: ID
+  name: String
+  parent: TransferInstitutionParent
+}
+
+type TransferInstitutionParent {
+  name: String
+}
+
+type TransferLinkedAccount {
+  id: ID
+}
+
+type TransferStateHistory {
+  state: String
+  notes: String
+  transition_submitted_by: String
+  transitioned_at: ISO8601DateTime
+  transition_code: String
+}
+
+type SearchTransfersPayload {
+  results: [Transfer!]
+}
+
+type CreditCardActivitiesPayload {
+  nodes: [CreditCardActivity!]!
+}
+
+type CreditCardActivity {
+  id: ID
+  type: String
+  merchantName: String
+  status: CreditCardActivityStatusEnum
+  originalCurrency: Currency
+  originalAmount: String
+  occurredAt: ISO8601DateTime
+}
+
+type ReissueCardPayload {
+  success: Boolean
+  errors: [MutationError!]
+}
+
+type MutationError {
+  field: String
+  value: String
+  message: String
+  path: [String!]
+}
+
+union ResetCreditCardPINRetryCounterResult =
+    CreditCardAccount
+  | ProcessorRequestFailedError
+  | CardNotFoundError
+  | CardInvalidStateError
+
+union UnblockCreditCardResult =
+    CreditCardAccount
+  | CardNotFoundError
+  | CardNotLinkedError
+  | ProcessorRequestFailedError
+
+type ProcessorRequestFailedError {
+  message: String
+}
+
+type CardNotFoundError {
+  message: String
+}
+
+type CardInvalidStateError {
+  message: String
+}
+
+type CardNotLinkedError {
+  message: String
+}
+
+type PersonalDataUpdatePayload {
+  personalData: PersonalData
+  errors: [MutationError!]
+}
+
+type PersonalData {
+  fullLegalName: String
+  taxIdentificationNumbers: [TaxIdentificationNumber!]
+  marketDataProfessional: MarketDataProfessional
+}
+
+type TaxIdentificationNumber {
+  id: ID
+  type: String
+  number_obfuscated: String
+}
+
+type MarketDataProfessional {
+  id: ID
+  isMarketDataProfessional: Boolean
+  investorUpdatedAt: ISO8601DateTime
+}
+
+type DataRequest {
+  id: ID
+  answersReceivedAt: ISO8601DateTime
+  formLink: String
+  subjectText: String
+  ticketId: String
+}
+
+type IdentityZendeskDecagonAuth {
+  token: String
+  authToken: String
+  conversationId: String
+}
+
+type PublicZendeskDecagonAuth {
+  token: String
+  authToken: String
+}
+
+type EmployeesBreakdownByStatus {
+  unassignedEmployees: [Employee!]
+  contributingEmployees: [Employee!]
+}
+
+type Employee {
+  id: ID
+  givenName: String
+  surname: String
+  status: String
+  email: String
+}
+
+input ActivitySortInput {
+  order: String
+  field: String
+}
+
+type PortfolioActivity {
+  activity_type: String
+  sub_type: String
+  account_id: ID
+  description: String
+  effective_date: ISO8601DateTime
+  process_date: ISO8601DateTime
+  custodian_account_id: ID
+  symbol: String
+  quantity: Float
+  account_value: Money
+  market_value: Money
+  market_price: Money
+  commission: Money
+  book_value: Money
+  fx_rate: Float
+  visible: Boolean
+}
+
+type SecurityQuoteUpdate {
+  id: ID
+  quoteV2(currency: Currency): EquityQuote
+}

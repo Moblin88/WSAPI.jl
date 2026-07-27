@@ -16,7 +16,17 @@ identity_id === nothing && error("Unable to resolve identity_canonical_id.")
 response = client(
     "query FetchAccounts(\$identityId: ID!, \$pageSize: Int = 25, \$cursor: String) { identity(id: \$identityId) { accounts(filter: {}, first: \$pageSize, after: \$cursor) { edges { node { id } } pageInfo { hasNextPage endCursor } } } }",
     "FetchAccounts",
-    (identityId = identity_id, pageSize = 25),
+    (identityId = identity_id, pageSize = 25);
+    wsapi_connection_path = ("data", "identity", "accounts"),
+)
+
+# Opt out of auto-pagination and fetch only the first page:
+first_page_only = client(
+    "query FetchAccounts(\$identityId: ID!, \$pageSize: Int = 25, \$cursor: String) { identity(id: \$identityId) { accounts(filter: {}, first: \$pageSize, after: \$cursor) { edges { node { id } } pageInfo { hasNextPage endCursor } } } }",
+    "FetchAccounts",
+    (identityId = identity_id, pageSize = 25);
+    wsapi_connection_path = ("data", "identity", "accounts"),
+    wsapi_single_page = true,
 )
 ```
 
@@ -37,6 +47,9 @@ Notes:
 - For integration-style testing, you can point `WSClient` at a localhost server via `login_page_url`, `oauth_token_url`, `token_info_url`, and `graphql_url`.
 - Rotated/new refresh tokens are persisted back to the same file as plain token text.
 - GraphQL calls accept an optional symbol-keyed pairs iterable (e.g. NamedTuple or `Dict{Symbol,Any}`) plus keyword arguments, where keyword arguments override duplicate keys.
+- GraphQL pagination is explicit: pass `wsapi_connection_path` (for example `("data", "identity", "accounts")`) to paginate that connection.
+- If `wsapi_connection_path` is not provided, `client(...)` returns a single response page.
+- Use `wsapi_single_page=true` to force single-page behavior even when `wsapi_connection_path` is provided.
 - Access tokens are refreshed automatically when they are within 30 seconds of expiry.
 
 Inspired by:
