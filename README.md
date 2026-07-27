@@ -20,6 +20,16 @@ response = client(
 )
 ```
 
+Environment setup (recommended):
+
+```sh
+export WSAPI_TOKEN_FILE="/path/to/token.txt"
+```
+
+Then either:
+- add it to your shell startup file (for terminal sessions), or
+- set `"terminal.integrated.env.osx"` in VS Code settings so integrated terminals and REPL-launched sessions inherit it.
+
 Notes:
 - `WSClient()` reads the refresh token path from `ENV["WSAPI_TOKEN_FILE"]` by default. You can also pass `WSClient(token_file)` explicitly.
 - `WSAPI.ensure_fresh!(client)` also populates and caches `client.identity_canonical_id`.
