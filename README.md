@@ -8,7 +8,7 @@ Basic usage:
 ```julia
 using WSAPI
 
-client = WSClient(expanduser("~/.config/wsapi-token"))
+client = WSClient()  # reads ENV["WSAPI_TOKEN_FILE"] by default
 WSAPI.ensure_fresh!(client)
 identity_id = client.identity_canonical_id
 identity_id === nothing && error("Unable to resolve identity_canonical_id.")
@@ -21,7 +21,7 @@ response = client(
 ```
 
 Notes:
-- `WSClient(token_file)` reads the refresh token as plain text from the file and uses it to obtain access tokens automatically.
+- `WSClient()` reads the refresh token path from `ENV["WSAPI_TOKEN_FILE"]` by default. You can also pass `WSClient(token_file)` explicitly.
 - `WSAPI.ensure_fresh!(client)` also populates and caches `client.identity_canonical_id`.
 - The token file contains only the raw refresh token string — not JSON.
 - For integration-style testing, you can point `WSClient` at a localhost server via `login_page_url`, `oauth_token_url`, `token_info_url`, and `graphql_url`.

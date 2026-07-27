@@ -34,7 +34,7 @@ include("graphql.jl")
 
 """
     WSClient(
-        token_file;
+        token_file=get(ENV, "WSAPI_TOKEN_FILE", nothing);
         login_page_url=LOGIN_PAGE_URL,
         oauth_token_url=OAUTH_TOKEN_URL,
         token_info_url=TOKEN_INFO_URL,
@@ -46,12 +46,13 @@ Create a Wealthsimple client without authenticating.
 Call `ensure_fresh!(client)` before requests that require authentication.
 """
 function WSClient(
-    token_file;
+    token_file = get(ENV, "WSAPI_TOKEN_FILE", nothing);
     login_page_url = LOGIN_PAGE_URL,
     oauth_token_url = OAUTH_TOKEN_URL,
     token_info_url = TOKEN_INFO_URL,
     graphql_url = GRAPHQL_URL,
 )
+    (token_file isa String && !isempty(token_file)) || error("token_file is required. Pass WSClient(token_file) or set WSAPI_TOKEN_FILE.")
     device_id, client_id = bootstrap_device_and_client(login_page_url)
     session_id = uuid4()
     client = WSClient(
