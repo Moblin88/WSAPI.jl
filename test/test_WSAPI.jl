@@ -3,9 +3,6 @@
     using Dates
     using UUIDs
 
-    @test WSAPI.build_variables(Dict(:a => 1, "b" => 2), pairs((c = 3, b = 4))) == Dict("a" => 1, "b" => 4, "c" => 3)
-    @test WSAPI.build_variables(nothing, pairs((x = 1,))) == Dict("x" => 1)
-
     client = WSAPI.WSClient(
         "tokens.txt",
         "cid",
@@ -97,8 +94,10 @@ end
 
             result = client("query Q{ok}", "Q")
             @test result["data"]["ok"] == true
+            result2 = client("query Q2(\$a:Int,\$b:Int,\$c:Int){ok}", "Q2", Dict(:a => 1, :b => 2); b = 4, c = 5)
+            @test result2["data"]["ok"] == true
 
-            @test length(log.requests) == 5
+            @test length(log.requests) == 6
             @test log.requests[1].method == "GET"
             @test log.requests[1].target == "/app/login"
             @test log.requests[2].method == "GET"
@@ -114,8 +113,14 @@ end
             @test log.requests[5].target == "/graphql"
             graphql_payload = JSON.parse(log.requests[5].body)
             @test graphql_payload["operationName"] == "Q"
+            @test graphql_payload["variables"] == Dict{String, Any}()
             auth_headers = filter(h -> lowercase(String(h[1])) == "authorization", log.requests[5].headers)
             @test length(auth_headers) == 1
+            @test log.requests[6].method == "POST"
+            @test log.requests[6].target == "/graphql"
+            graphql_payload2 = JSON.parse(log.requests[6].body)
+            @test graphql_payload2["operationName"] == "Q2"
+            @test graphql_payload2["variables"] == Dict("a" => 1, "b" => 4, "c" => 5)
             @test String(auth_headers[1][2]) == "Bearer new_access"
         finally
             close(server)
