@@ -9,17 +9,22 @@ Basic usage:
 using WSAPI
 
 client = WSClient(expanduser("~/.config/wsapi-token"))
+WSAPI.ensure_fresh!(client)
+identity_id = client.identity_canonical_id
+identity_id === nothing && error("Unable to resolve identity_canonical_id.")
+
 response = client(
-    "query FetchAccounts(\$first: Int!) { accounts(first: \$first) { edges { node { id } } } }",
+    "query FetchAccounts(\$identityId: ID!, \$pageSize: Int = 25, \$cursor: String) { identity(id: \$identityId) { accounts(filter: {}, first: \$pageSize, after: \$cursor) { edges { node { id } } pageInfo { hasNextPage endCursor } } } }",
     "FetchAccounts",
-    Dict("first" => 25),
+    Dict("identityId" => identity_id, "pageSize" => 25),
 )
 ```
 
 Notes:
 - `WSClient(token_file)` reads the refresh token as plain text from the file and uses it to obtain access tokens automatically.
+- `WSAPI.ensure_fresh!(client)` also populates and caches `client.identity_canonical_id`.
 - The token file contains only the raw refresh token string — not JSON.
-- For integration-style testing, you can point `WSClient` at a localhost server via `login_page_url`, `oauth_token_url`, and `graphql_url`.
+- For integration-style testing, you can point `WSClient` at a localhost server via `login_page_url`, `oauth_token_url`, `token_info_url`, and `graphql_url`.
 - Rotated/new refresh tokens are persisted back to the same file as plain token text.
 - GraphQL calls accept an optional `pairs`-iterable variables object plus keyword arguments, where keyword arguments override duplicate keys.
 - Access tokens are refreshed automatically when they are within 30 seconds of expiry.

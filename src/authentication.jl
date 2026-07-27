@@ -46,6 +46,45 @@ function token_headers((;device_id, session_id), profile)
 end
 
 """
+    fetch_identity_canonical_id!(client)
+
+Fetch the identity canonical id from the OAuth token-info endpoint and cache it
+on `client`.
+"""
+function fetch_identity_canonical_id!(client)
+    token = client.access_token
+    token === nothing && error("WSClient is not authenticated. Call ensure_fresh!(client) first.")
+    response = HTTP.request(
+        "GET",
+        client.token_info_url,
+        [
+            "Authorization" => "Bearer $token",
+            "x-wealthsimple-client" => "@wealthsimple/wealthsimple",
+        ];
+        status_exception = false,
+    )
+    response.status >= 400 && error("Unable to fetch token info from Wealthsimple (HTTP $(response.status)).")
+
+    payload = JSON.parse(response.body)
+    client.identity_canonical_id = payload["identity_canonical_id"]
+    return nothing
+end
+
+"""
+    apply_auth_response!(client, payload)
+
+Apply OAuth login/refresh response payload to `client`, persist the returned
+refresh token, and refresh the cached identity canonical id.
+"""
+function apply_auth_response!(client, (; access_token, refresh_token, created_at, expires_in))
+    write(client.token_file, refresh_token)
+    client.access_token = access_token
+    client.access_token_expiry = Dates.unix2datetime(created_at + expires_in)
+    fetch_identity_canonical_id!(client)
+    return nothing
+end
+
+"""
     isstale(client) -> Bool
 
 Return `true` when `client` has no access-token expiry or when the token is
@@ -87,9 +126,15 @@ function refresh_access_token!(client)
 
     payload = JSON.parse(response.body)
 
-    write(client.token_file, payload["refresh_token"])
-    client.access_token = payload["access_token"]
-    client.access_token_expiry = Dates.unix2datetime(payload["created_at"] + payload["expires_in"])
+    apply_auth_response!(
+        client,
+        (
+            access_token = payload["access_token"],
+            refresh_token = payload["refresh_token"],
+            created_at = payload["created_at"],
+            expires_in = payload["expires_in"],
+        ),
+    )
     return true
 end
 
@@ -143,9 +188,15 @@ function interactive_login!(client)
     end
 
     status >= 400 && error("Wealthsimple login failed.")
-    write(client.token_file, payload["refresh_token"])
-    client.access_token = payload["access_token"]
-    client.access_token_expiry = Dates.unix2datetime(payload["created_at"] + payload["expires_in"])
+    apply_auth_response!(
+        client,
+        (
+            access_token = payload["access_token"],
+            refresh_token = payload["refresh_token"],
+            created_at = payload["created_at"],
+            expires_in = payload["expires_in"],
+        ),
+    )
     return nothing
 end
 
@@ -155,7 +206,12 @@ end
 Ensure `client` has a fresh access token using only refresh-token flow.
 """
 function ensure_fresh!(client)
-    !isstale(client) && return nothing
-    refresh_access_token!(client) || error("Unable to refresh Wealthsimple access token from token_file.")
+    if isstale(client)
+        refresh_access_token!(client) || error("Unable to refresh Wealthsimple access token from token_file.")
+        return nothing
+    end
+    if client.identity_canonical_id === nothing
+        fetch_identity_canonical_id!(client)
+    end
     return nothing
 end

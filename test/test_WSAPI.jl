@@ -13,9 +13,11 @@
         uuid4(),
         WSAPI.LOGIN_PAGE_URL,
         WSAPI.OAUTH_TOKEN_URL,
+        WSAPI.TOKEN_INFO_URL,
         WSAPI.GRAPHQL_URL,
         "access",
         Dates.now(Dates.UTC) + Dates.Second(15),
+        nothing,
     )
     @test WSAPI.isstale(client)
     client.access_token_expiry = Dates.now(Dates.UTC) + Dates.Second(300)
@@ -63,6 +65,8 @@ end
                     "created_at" => created_at,
                 )
                 return HTTP.Response(200, JSON.json(payload))
+            elseif request.method == "GET" && request.target == "/v1/oauth/v2/token/info"
+                return HTTP.Response(200, JSON.json(Dict("identity_canonical_id" => "identity-123")))
             elseif request.method == "POST" && request.target == "/graphql"
                 return HTTP.Response(200, JSON.json(Dict("data" => Dict("ok" => true))))
             end
@@ -77,6 +81,7 @@ end
                 token_path;
                 login_page_url = "$(base_url)/app/login",
                 oauth_token_url = "$(base_url)/v1/oauth/v2/token",
+                token_info_url = "$(base_url)/v1/oauth/v2/token/info",
                 graphql_url = "$(base_url)/graphql",
             )
             @test client.device_id == UUID("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
@@ -87,12 +92,13 @@ end
             WSAPI.ensure_fresh!(client)
             @test client.access_token == "new_access"
             @test client.access_token_expiry == Dates.unix2datetime(created_at) + Dates.Second(3600)
+            @test client.identity_canonical_id == "identity-123"
             @test read(token_path, String) == "new_refresh"
 
             result = client("query Q{ok}", "Q")
             @test result["data"]["ok"] == true
 
-            @test length(log.requests) == 4
+            @test length(log.requests) == 5
             @test log.requests[1].method == "GET"
             @test log.requests[1].target == "/app/login"
             @test log.requests[2].method == "GET"
@@ -102,11 +108,13 @@ end
             refresh_payload = JSON.parse(log.requests[3].body)
             @test refresh_payload["grant_type"] == "refresh_token"
             @test refresh_payload["refresh_token"] == "old_refresh"
-            @test log.requests[4].method == "POST"
-            @test log.requests[4].target == "/graphql"
-            graphql_payload = JSON.parse(log.requests[4].body)
+            @test log.requests[4].method == "GET"
+            @test log.requests[4].target == "/v1/oauth/v2/token/info"
+            @test log.requests[5].method == "POST"
+            @test log.requests[5].target == "/graphql"
+            graphql_payload = JSON.parse(log.requests[5].body)
             @test graphql_payload["operationName"] == "Q"
-            auth_headers = filter(h -> lowercase(String(h[1])) == "authorization", log.requests[4].headers)
+            auth_headers = filter(h -> lowercase(String(h[1])) == "authorization", log.requests[5].headers)
             @test length(auth_headers) == 1
             @test String(auth_headers[1][2]) == "Bearer new_access"
         finally
