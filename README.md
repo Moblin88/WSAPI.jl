@@ -38,3 +38,9 @@ Notes:
 - Rotated/new refresh tokens are persisted back to the same file as plain token text.
 - GraphQL calls accept an optional `pairs`-iterable variables object plus keyword arguments, where keyword arguments override duplicate keys.
 - Access tokens are refreshed automatically when they are within 30 seconds of expiry.
+
+Inspired by:
+- https://github.com/gboudreau/ws-api-php
+
+Disclaimer:
+- This project was developed with the assistance of AI tools.
