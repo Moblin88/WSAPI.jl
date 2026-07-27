@@ -8,7 +8,7 @@ Basic usage:
 ```julia
 using WSAPI
 
-client = WSClient("~/.config/wsapi-token.json")
+client = WSClient(expanduser("~/.config/wsapi-token"))
 response = client(
     "query FetchAccounts(\$first: Int!) { accounts(first: \$first) { edges { node { id } } } }",
     "FetchAccounts",
@@ -17,7 +17,8 @@ response = client(
 ```
 
 Notes:
-- `WSClient(token_file)` reads `refresh_token` from the file and refreshes access tokens from that file only.
+- `WSClient(token_file)` reads the refresh token as plain text from the file and uses it to obtain access tokens automatically.
+- The token file contains only the raw refresh token string — not JSON.
 - For integration-style testing, you can point `WSClient` at a localhost server via `login_page_url`, `oauth_token_url`, and `graphql_url`.
 - Rotated/new refresh tokens are persisted back to the same file as plain token text.
 - GraphQL calls accept an optional `pairs`-iterable variables object plus keyword arguments, where keyword arguments override duplicate keys.
