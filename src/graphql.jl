@@ -31,6 +31,8 @@ end
     graphql_headers(client)
 
 Build GraphQL request headers for the authenticated client.
+
+Throws an error when `client.access_token` is `nothing`.
 """
 function graphql_headers(client)
     token = client.access_token
@@ -55,6 +57,9 @@ Execute a GraphQL request with the authenticated `client`.
 
 `variables` and keyword arguments are merged, with keyword arguments taking
 precedence for duplicate keys.
+
+Calls `ensure_fresh!(client)` before sending the request. Throws an error when
+the response status is 400 or higher.
 """
 function (client::WSClient)(query, operation_name, variables = nothing; kwargs...)
     ensure_fresh!(client)

@@ -45,6 +45,12 @@ function token_headers((;device_id, session_id), profile)
     ]
 end
 
+"""
+    isstale(client) -> Bool
+
+Return `true` when `client` has no access-token expiry or when the token is
+within `TOKEN_EXPIRY_BUFFER` of expiring.
+"""
 function isstale((;access_token_expiry))
     access_token_expiry === nothing && return true
     return access_token_expiry <= now(Dates.UTC) + TOKEN_EXPIRY_BUFFER
@@ -57,6 +63,9 @@ end
 Try refreshing the access token from the refresh token stored on disk. Returns
 `true` on success and `false` when no usable refresh token is available or the
 refresh request fails.
+
+On success, this overwrites `client.token_file` with the new refresh token and
+updates `client.access_token` and `client.access_token_expiry`.
 """
 function refresh_access_token!(client)
     isfile(client.token_file) || return false
@@ -89,6 +98,9 @@ end
 
 Prompt for credentials (and OTP when needed), exchange them for tokens, and
 persist the returned refresh token.
+
+This function prompts on stdin/stdout, updates `client.access_token` and
+`client.access_token_expiry`, and overwrites `client.token_file`.
 """
 function interactive_login!(client)
     print("Wealthsimple username: ")
