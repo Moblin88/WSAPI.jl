@@ -88,6 +88,24 @@ type Query {
   dataRequestsByIdentity(identityId: ID!): [DataRequest!]!
   zendeskDecagonPublicAuth: PublicZendeskDecagonAuth
   employeesBreakdownByStatus(employerId: String!): EmployeesBreakdownByStatus
+  orderValidationConfigs(accountId: ID, securityId: ID): OrderValidationConfigs
+  soOrdersExtendedOrder(id: ID!): Order
+  soOrdersMultilegOrder(id: ID!): Order
+  cryptoOrder(id: ID!): Order
+  cryptoOrderConfig(securityId: ID, accountId: ID): CryptoOrderConfig
+  tradingBalanceBuyingPower(accountId: ID!): TradingBalanceBuyingPower
+  securityOrderExpiry(securityId: ID!): SecurityOrderExpiry
+  orderServiceExtendedOrderStatus(id: ID!): OrderStatusView
+  orderServiceExtendedOrderFills(id: ID!): [OrderFill!]
+  orderServiceExtendedOrderActivityDetails(id: ID!): [OrderActivityDetail!]
+  orderServiceOptionFees(accountId: ID!): OrderFeeSummary
+  orderServiceFuturesFees(accountId: ID!): OrderFeeSummary
+  cryptoSpread(securityId: ID!, accountId: ID): CryptoSpread
+  cryptoPositions(identityId: ID!): [CryptoPosition!]
+  cryptoIntervention(accountId: ID!, securityId: ID!): CryptoIntervention
+  securitiesOrderSubtypes(securityIds: [ID!]!): [SecurityOrderSubtype!]
+  orderFinancials(orderId: ID!): OrderFinancials
+  soOrdersOrderFill(orderId: ID!): [OrderFill!]
 }
 
 type Mutation {
@@ -101,10 +119,24 @@ type Mutation {
   unblockCreditCard(input: UnblockCreditCardInput!): UnblockCreditCardResult
   personalDataUpdate(input: PersonalDataUpdateInput!): PersonalDataUpdatePayload
   signDocumentUrl(bucket: String, key: String!): SignedDocumentUrl
+  soOrdersOrderCreate(input: SoOrdersOrderCreateInput!): OrderMutationPayload
+  soOrdersOrderModify(input: SoOrdersOrderModifyInput!): OrderMutationPayload
+  soOrdersMlegOrderModify(input: SoOrdersMlegOrderModifyInput!): OrderMutationPayload
+  orderServiceModifySingleOrder(input: OrderServiceModifySingleOrderInput!): OrderMutationPayload
+  soOrdersOrderExecutionCreate(input: SoOrdersOrderExecutionCreateInput!): OrderMutationPayload
+  futuresOrderCreate(input: FuturesOrderCreateInput!): OrderMutationPayload
+  cryptoCreateOrder(input: CryptoCreateOrderInput!): OrderMutationPayload
+  cryptoLimitOrderModify(input: CryptoLimitOrderModifyInput!): OrderMutationPayload
+  cryptoInterventionAcknowledge(input: CryptoInterventionAcknowledgeInput!): OrderMutationPayload
+  cryptoQuoteCreate(input: CryptoQuoteCreateInput!): CryptoQuotePayload
+  cryptoLimitQuoteCreate(input: CryptoLimitQuoteCreateInput!): CryptoQuotePayload
+  tradeConfirmationUrlGenerate(input: TradeConfirmationUrlGenerateInput!): TradeConfirmationUrlPayload
+  preciousMetalCreateOrder(input: PreciousMetalCreateOrderInput!): OrderMutationPayload
 }
 
 type Subscription {
   securityQuoteUpdates(id: ID!): SecurityQuoteUpdate
+  orderUpdates(identityId: ID!): OrderServiceOrderUpdate
 }
 
 input SecuritySearchInput {
@@ -172,6 +204,58 @@ input UnblockCreditCardInput {
 input PersonalDataUpdateInput {
   identityId: ID
   payload: JSON
+}
+
+input SoOrdersOrderCreateInput {
+  payload: JSON!
+}
+
+input SoOrdersOrderModifyInput {
+  payload: JSON!
+}
+
+input SoOrdersMlegOrderModifyInput {
+  payload: JSON!
+}
+
+input OrderServiceModifySingleOrderInput {
+  payload: JSON!
+}
+
+input SoOrdersOrderExecutionCreateInput {
+  payload: JSON!
+}
+
+input FuturesOrderCreateInput {
+  payload: JSON!
+}
+
+input CryptoCreateOrderInput {
+  payload: JSON!
+}
+
+input CryptoLimitOrderModifyInput {
+  payload: JSON!
+}
+
+input CryptoInterventionAcknowledgeInput {
+  payload: JSON!
+}
+
+input CryptoQuoteCreateInput {
+  payload: JSON!
+}
+
+input CryptoLimitQuoteCreateInput {
+  payload: JSON!
+}
+
+input TradeConfirmationUrlGenerateInput {
+  payload: JSON!
+}
+
+input PreciousMetalCreateOrderInput {
+  payload: JSON!
 }
 
 enum CreditCardActivityStatusEnum {
@@ -988,4 +1072,147 @@ type PortfolioActivity {
 type SecurityQuoteUpdate {
   id: ID
   quoteV2(currency: Currency): EquityQuote
+}
+
+type OrderValidationConfigs {
+  orderTypes: [String!]
+  subtypes: [String!]
+  restrictions: [String!]
+  raw: JSON
+}
+
+type Order {
+  id: ID
+  status: String
+  state: String
+  type: String
+  side: String
+  orderType: String
+  orderSubtype: String
+  quantity: Float
+  limitPrice: Money
+  stopPrice: Money
+  filledQuantity: Float
+  averageFillPrice: Money
+  createdAt: ISO8601DateTime
+  updatedAt: ISO8601DateTime
+  raw: JSON
+}
+
+type CryptoOrderConfig {
+  maxNotional: Money
+  minNotional: Money
+  supportedOrderTypes: [String!]
+  raw: JSON
+}
+
+type TradingBalanceBuyingPower {
+  accountId: ID
+  currency: Currency
+  buyingPower: Money
+  availableToTrade: Money
+  raw: JSON
+}
+
+type SecurityOrderExpiry {
+  securityId: ID
+  expiryDate: Date
+  raw: JSON
+}
+
+type OrderStatusView {
+  id: ID
+  status: String
+  state: String
+  reason: String
+  updatedAt: ISO8601DateTime
+  raw: JSON
+}
+
+type OrderFill {
+  id: ID
+  quantity: Float
+  price: Money
+  occurredAt: ISO8601DateTime
+  venue: String
+  raw: JSON
+}
+
+type OrderActivityDetail {
+  id: ID
+  type: String
+  message: String
+  occurredAt: ISO8601DateTime
+  raw: JSON
+}
+
+type OrderFeeSummary {
+  accountId: ID
+  totalFees: Money
+  feeBreakdown: JSON
+}
+
+type CryptoSpread {
+  securityId: ID
+  spreadBps: Float
+  buyRate: Float
+  sellRate: Float
+  raw: JSON
+}
+
+type CryptoPosition {
+  securityId: ID
+  quantity: Float
+  marketValue: Money
+  raw: JSON
+}
+
+type CryptoIntervention {
+  id: ID
+  required: Boolean
+  message: String
+  raw: JSON
+}
+
+type SecurityOrderSubtype {
+  securityId: ID
+  subtypes: [String!]
+}
+
+type OrderFinancials {
+  orderId: ID
+  grossAmount: Money
+  estimatedFees: Money
+  netAmount: Money
+  raw: JSON
+}
+
+type OrderMutationPayload {
+  id: ID
+  status: String
+  order: Order
+  errors: [MutationError!]
+  raw: JSON
+}
+
+type CryptoQuotePayload {
+  id: ID
+  expiresAt: ISO8601DateTime
+  buyRate: Float
+  sellRate: Float
+  amount: Money
+  raw: JSON
+}
+
+type TradeConfirmationUrlPayload {
+  url: String
+}
+
+type OrderServiceOrderUpdate {
+  orderId: ID
+  identityId: ID
+  status: String
+  state: String
+  updatedAt: ISO8601DateTime
+  raw: JSON
 }
