@@ -19,7 +19,6 @@ mutable struct WSClient
     const client_id::String
     const device_id::UUID
     const session_id::UUID
-    const refresh_lock::ReentrantLock
     const login_page_url::URI
     const oauth_token_url::URI
     const graphql_url::URI
@@ -50,7 +49,6 @@ function WSClient(
         client_id,
         device_id,
         session_id,
-        ReentrantLock(),
         URI(login_page_url),
         URI(oauth_token_url),
         URI(graphql_url),

@@ -11,7 +11,6 @@
         "cid",
         uuid4(),
         uuid4(),
-        ReentrantLock(),
         WSAPI.LOGIN_PAGE_URL,
         WSAPI.OAUTH_TOKEN_URL,
         WSAPI.GRAPHQL_URL,

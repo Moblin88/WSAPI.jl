@@ -94,78 +94,12 @@ function refresh_access_token!(client)
 end
 
 """
-    interactive_login!(client)
-
-Prompt for credentials (and OTP when needed), exchange them for tokens, and
-persist the returned refresh token.
-
-This function prompts on stdin/stdout, updates `client.access_token` and
-`client.access_token_expiry`, and overwrites `client.token_file`.
-"""
-function interactive_login!(client)
-    print("Wealthsimple username: ")
-    username = chomp(readline(stdin))
-    password = Base.shred!(readchomp, Base.getpass("Wealthsimple password"))
-    println()
-    login_payload = (
-        grant_type = "password",
-        skip_provision = "true",
-        username = username,
-        password = password,
-        scope = "read write",
-        client_id = client.client_id
-    )
-    login_json = JSON.json(login_payload)
-    response = HTTP.request(
-        "POST",
-        client.oauth_token_url,
-        token_headers(client, "undefined"),
-        login_json;
-        status_exception = false
-    )
-    status = response.status
-    payload = JSON.parse(response.body)
-
-    if status >= 400 && get(payload, "error", "") == "invalid_grant"
-        otp = Base.shred!(readchomp, Base.getpass("Wealthsimple OTP code"))
-        println()
-        otp_headers = token_headers(client, "undefined")
-        push!(otp_headers, "x-wealthsimple-otp" => "$(otp);remember=true")
-        response = HTTP.request(
-            "POST",
-            client.oauth_token_url,
-            otp_headers,
-            login_json;
-            status_exception = false,
-        )
-        status = response.status
-        payload = JSON.parse(response.body)
-    end
-
-    if status >= 400
-        error("Wealthsimple login failed.")
-    end
-
-    write(client.token_file, payload["refresh_token"])
-    client.access_token = payload["access_token"]
-    client.access_token_expiry = Dates.unix2datetime(payload["created_at"] + payload["expires_in"])
-    return nothing
-end
-
-"""
     ensure_fresh!(client)
 
-Ensure `client` has a fresh access token. Tries refresh-token flow first, then
-falls back to interactive login when refresh is unavailable or fails.
+Ensure `client` has a fresh access token using only refresh-token flow.
 """
 function ensure_fresh!(client)
     !isstale(client) && return nothing
-    lock(client.refresh_lock)
-    try
-        !isstale(client) && return nothing
-        refresh_access_token!(client) || interactive_login!(client)
-    finally
-        unlock(client.refresh_lock)
-    end
+    refresh_access_token!(client) || error("Unable to refresh Wealthsimple access token from token_file.")
     return nothing
 end
